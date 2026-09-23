@@ -1,0 +1,9 @@
+[submodule "projects/oci-management-portal"]
+	path = projects/oci-management-portal
+	url = https://github.com/flynnkc/oci-management-portal.git
+[submodule "projects/tag-updater"]
+	path = projects/tag-updater
+	url = https://github.com/flynnkc/tag-updater.git
+[submodule "projects/ociextirpater"]
+	path = projects/ociextirpater
+	url = https://github.com/therealcmj/ociextirpater.git
