@@ -10,6 +10,9 @@ Usage:
 Builds a Docker image with Buildx and pushes it to OCIR. Docker must already be
 logged in, unless --login is supplied.
 
+This is a Bash script. On Windows, run it from WSL; PowerShell and Command
+Prompt do not run it directly.
+
 Options:
   -p, --project PATH       Build context relative to the workspace (required)
   -r, --repository NAME    OCIR repository name (required)

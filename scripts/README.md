@@ -3,6 +3,10 @@
 These scripts provide repeatable development and operations tasks that apply to
 the projects in this workspace. Run them from the workspace root.
 
+> **Windows:** These are Bash scripts. Run them from Windows Subsystem for
+> Linux (WSL), not PowerShell or Command Prompt. Ensure Docker or Podman is
+> available to your WSL distribution.
+
 ## Build and push an OCIR image
 
 `build-and-push-image.sh` builds a project's Dockerfile with Docker Buildx or
