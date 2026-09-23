@@ -45,3 +45,9 @@ git submodule update --remote --recursive
 ```
 
 Review and commit the resulting submodule-reference updates deliberately; the umbrella repository pins the exact component revisions used together.
+
+## Workspace helpers
+
+Reusable workspace tasks live in [`scripts/`](scripts/). See the
+[helper-script guide](scripts/README.md), including the OCIR image build and
+push helper.
