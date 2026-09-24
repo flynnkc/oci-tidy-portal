@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and replace every placeholder before applying.
+tenancy_ocid       = "ocid1.tenancy.oc1..<tenancy>"
+region             = "us-ashburn-1"
+compartment_ocid   = "ocid1.compartment.oc1..<deployment-compartment>"
+identity_domain_id = "ocid1.domain.oc1..<identity-domain>"
+label              = "oci-tidy"
+
+# Update this after the LoadBalancer is created if its final URL differs.
+confidential_application_base_url = "https://portal.example.com"
+
+# Keep the OKE API private unless a trusted management CIDR is required.
+enable_external_kubectl_access = false
+lb_ingress_source_cidr         = "203.0.113.0/24"
+enable_lb_http_ingress         = false
+
+# Optional OCI API-key inputs; omit when the provider can use your OCI CLI profile.
+# user_ocid        = "ocid1.user.oc1..<user>"
+# fingerprint      = "<api-key-fingerprint>"
+# private_key_path = "/absolute/path/to/oci_api_key.pem"

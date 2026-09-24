@@ -1,0 +1,49 @@
+# OCI Extirpater deletes resources. The CronJob is suspended by default; review
+# all target compartments, IAM policies, and scheduling before setting suspend: false.
+image:
+  repository: ""
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: true
+  # Add the OCI OKE workload-identity annotation required by your cluster.
+  annotations: {}
+
+cronJob:
+  schedule: "0 0 * * *"
+  timeZone: ""
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 0
+  restartPolicy: Never
+  activeDeadlineSeconds: 21600
+
+config:
+  # OCI compartment OCIDs. At least one target is required.
+  compartments: []
+  # Required when authentication is OKE workload identity.
+  tenancy: ""
+  regions: ""
+  objects: ""
+  threads: -1
+  junkyard: ""
+  skipTagged: ""
+  skipDeleteCompartment: false
+  debug: false
+
+extraEnv: []
+resources: {}
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

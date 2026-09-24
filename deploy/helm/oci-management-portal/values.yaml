@@ -1,0 +1,55 @@
+replicaCount: 1
+
+image:
+  repository: ""
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+containerPort: 5000
+deploymentAnnotations: {}
+podAnnotations: {}
+podLabels: {}
+
+config:
+  create: true
+  existingConfigMap: ""
+  appUri: ""
+  proxy: "true"
+  tagNamespace: ""
+  tagKey: ""
+  filterNamespace: ""
+  filterKey: ""
+  cleanupCompartment: ""
+  authType: instance_principal
+  configFile: ""
+  profile: ""
+  idmEndpoint: ""
+  clientId: ""
+  sessionBackend: filesystem
+  sessionKeyPrefix: "oci-management-portal"
+  sessionRedisUrl: ""
+  sessionRedisUsername: ""
+  logLevel: INFO
+  logFormat: text
+
+secret:
+  create: true
+  existingSecret: ""
+  clientSecret: ""
+  sessionRedisPassword: ""
+  extraEnv: {}
+
+service:
+  type: LoadBalancer
+  port: 80
+  annotations: {}
+
+# Reserved for profile or workload-principal deployments. The current portal
+# templates do not mount these fields; keep OCI credentials outside the chart.
+serviceAccount:
+  create: false
+  name: ""

@@ -1,0 +1,50 @@
+image:
+  repository: <region>.ocir.io/tag-updater
+  pullPolicy: IfNotPresent
+  tag: "0.1.14"
+
+imagePullSecrets: "ocir-secret"
+
+namespace:
+  create: false
+  name: ""
+  labels: {}
+  annotations: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: true
+
+podAnnotations: {}
+podLabels: {}
+
+cronJob:
+  schedule: "0 0 * * *"
+  timeZone: ""
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 1
+  restartPolicy: Never
+
+config:
+  tagNamespace: ""
+  tagKey: ""
+  compartments: []
+  days: 90
+  logLevel: INFO
+  ociSigner: WORKLOAD_IDENTITY
+  ociIdentityRegion: ""
+  ociResourcePrincipalRegion: ""
+  ociTenancyId: ""
+
+extraEnv: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+

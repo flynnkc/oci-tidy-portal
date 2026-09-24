@@ -1,0 +1,9 @@
+# Terraform state and environment-specific inputs
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+!terraform/*.example.tfvars
+
+# Keep installation-specific Helm values out of version control.
+helm/*/values.local.yaml

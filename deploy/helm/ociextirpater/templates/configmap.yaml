@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ociextirpater.fullname" . }}
+  labels:
+    {{- include "ociextirpater.labels" . | nindent 4 }}
+data:
+  EXTIRPATER_COMPARTMENT: {{ join "," (required "config.compartments is required" .Values.config.compartments) | quote }}
+  EXTIRPATER_TENANCY: {{ required "config.tenancy is required" .Values.config.tenancy | quote }}
+  EXTIRPATER_OKE_WORKLOAD_IDENTITY: "true"
+  EXTIRPATER_THREADS: {{ .Values.config.threads | quote }}
+  {{- with .Values.config.regions }}
+  EXTIRPATER_REGIONS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.objects }}
+  EXTIRPATER_OBJECTS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.junkyard }}
+  EXTIRPATER_JUNKYARD: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.skipTagged }}
+  EXTIRPATER_SKIP_TAGGED: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.config.skipDeleteCompartment }}
+  EXTIRPATER_SKIP_DELETE_COMPARTMENT: "true"
+  {{- end }}
+  {{- if .Values.config.debug }}
+  EXTIRPATER_DEBUG: "true"
+  {{- end }}

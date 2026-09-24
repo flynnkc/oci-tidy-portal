@@ -1,0 +1,17 @@
+The tag-updater CronJob was installed.
+
+Schedule:
+  {{ .Values.cronJob.schedule }}{{ if .Values.cronJob.timeZone }} ({{ .Values.cronJob.timeZone }}){{ end }}
+
+Check runs with:
+  kubectl get cronjob {{ include "tag-updater.fullname" . }} -n {{ .Release.Namespace }}
+  kubectl get jobs -n {{ .Release.Namespace }}
+{{- if .Values.imagePullSecrets }}
+
+Image pull secret reference:
+  {{ .Values.imagePullSecrets }}
+
+The chart references existing image pull secrets only. Create them in the target
+namespace with kubectl if they do not already exist.
+{{- end }}
+

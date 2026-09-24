@@ -1,0 +1,6 @@
+OCI Extirpater is installed as a suspended CronJob by default.
+
+Before enabling it, set image.repository, config.compartments, config.tenancy,
+and the required OKE workload-identity ServiceAccount annotations. Review its
+IAM permissions carefully, then set cronJob.suspend=false in a private values
+file and upgrade the release.

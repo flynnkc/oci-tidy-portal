@@ -8,19 +8,19 @@ umbrella repository:
 | --- | --- | --- |
 | OCI Management Portal | Helm on OKE | Authenticated interface for resource discovery and lifecycle actions |
 | Tag Updater | Helm CronJob on OKE | Periodically updates defined-tag defaults |
-| OCI Extirpater | Compute instance provisioned by Terraform/Resource Manager | Scheduled cleanup of a selected compartment |
+| OCI Extirpater | Suspended Helm CronJob on OKE | Scheduled cleanup of explicitly selected compartments |
 
 The Portal is the primary deployment. Tag Updater and Extirpater are optional,
 independent automation components; deploy either only after approving its IAM
 scope and schedule. In particular, Extirpater deletes resources and its target
 compartment must be reviewed carefully.
 
-For component-specific configuration and troubleshooting, use the pinned
-source documents:
+The deployable infrastructure and charts are owned by this repository:
 
-- [Portal deployment guide](projects/oci-management-portal/DEPLOYMENT_GUIDE.md)
-- [Tag Updater guide](projects/tag-updater/README.md)
-- [Extirpater deployment guide](projects/ociextirpater/deploy/README.md)
+- [Terraform infrastructure](deploy/terraform/)
+- [OCI Management Portal chart](deploy/helm/oci-management-portal/)
+- [Tag Updater chart](deploy/helm/tag-updater/)
+- [OCI Extirpater chart](deploy/helm/ociextirpater/)
 
 ## Table of Contents
 
@@ -41,12 +41,12 @@ source documents:
 ## Deployment architecture and order
 
 ```text
-Umbrella repository (pinned submodule commits)
-  ├── Portal Terraform → OCI Identity Domain, networking, OKE, IAM baseline
-  ├── OCIR ← Portal image + Tag Updater image
+Umbrella repository (pinned source submodule commits + central deployment assets)
+  ├── deploy/terraform → OCI Identity Domain, networking, OKE, IAM baseline
+  ├── OCIR ← Portal image + Tag Updater image + Extirpater image
   ├── Portal Helm chart → OKE Deployment + Service
   ├── Tag Updater Helm chart → OKE CronJob + workload identity
-  └── Extirpater Terraform → scheduled Compute cleanup host
+  └── Extirpater Helm chart → suspended OKE CronJob + workload identity
 ```
 
 Use this order for a new environment:
@@ -55,12 +55,12 @@ Use this order for a new environment:
 2. Decide the managed tags, cleanup compartment, and which optional automation
    components are approved.
 3. Provision the Portal's OKE, networking, Identity Domain application, and
-   baseline IAM with OCI Resource Manager.
+   baseline IAM from `deploy/terraform`.
 4. Create OCIR repositories, publish the Portal image, and deploy the Portal.
 5. Optionally publish and deploy Tag Updater after creating workload-identity
    policies.
-6. Optionally deploy Extirpater into a compartment distinct from its cleanup
-   target, with its schedule and delete permissions reviewed first.
+6. Optionally install Extirpater as a suspended OKE CronJob, then enable it
+   only after its schedule, delete permissions, and cleanup target are reviewed.
 
 ## Prerequisites
 
@@ -69,13 +69,12 @@ Use this order for a new environment:
 The deployment operator needs access to create or use the following in the
 target tenancy:
 
-- a deployment compartment for OKE, networking, load balancers, and optional
-  Extirpater infrastructure;
+- a deployment compartment for OKE, networking, load balancers, and OCIR
+  repositories;
 - a cleanup compartment, including approval to perform lifecycle actions there;
 - an OCI Identity Domain for the Portal's confidential OIDC application;
 - OCIR repositories;
 - IAM policies, dynamic groups, and OKE workload-identity policies;
-- OCI Resource Manager stacks and jobs.
 
 Use a dedicated deployment compartment where practical. Do not use that same
 compartment as Extirpater's cleanup target unless the resulting deletion scope
@@ -87,10 +86,9 @@ Install and configure:
 
 - Git with submodule support;
 - OCI CLI, authenticated to the target tenancy;
-- OCI Console/Resource Manager access;
+- OCI Console access;
 - `kubectl` and `helm` for the target OKE cluster;
 - Docker with Buildx or Podman;
-- `zip` when uploading Terraform source to Resource Manager.
 
 The workspace helper scripts are Bash scripts. On Windows, run them from WSL,
 not PowerShell or Command Prompt, and ensure Docker or Podman is accessible
@@ -105,8 +103,8 @@ inside the WSL distribution.
 - Identity Domain OCID;
 - defined-tag namespace/key and expiry namespace/key used by the Portal;
 - Tag Updater schedule, target compartments, and tag default values;
-- whether Extirpater is approved, its deployment compartment, cleanup target,
-  exclusions, and start/stop schedule.
+- whether Extirpater is approved, its cleanup target, resource categories,
+  exclusions, and CronJob schedule.
 
 ## Prepare the pinned release
 
@@ -151,8 +149,10 @@ export OCIR_NAMESPACE="$(oci os ns get --query data --raw-output)"
 export REGISTRY="ocir.${OCI_REGION}.oci.oraclecloud.com"
 export PORTAL_REPOSITORY="oci-management-portal"
 export TAG_UPDATER_REPOSITORY="tag-updater"
+export EXTIRPATER_REPOSITORY="ociextirpater"
 export PORTAL_TAG="$(git -C projects/oci-management-portal rev-parse --short HEAD)"
 export TAG_UPDATER_TAG="$(git -C projects/tag-updater rev-parse --short HEAD)"
+export EXTIRPATER_TAG="$(git -C projects/ociextirpater rev-parse --short HEAD)"
 ```
 
 Keep secrets out of shell history, Helm values committed to Git, and terminal
@@ -160,15 +160,17 @@ output. You will need an OCIR auth token and an Identity Domain client secret.
 
 ## Provision Portal infrastructure
 
-The Portal Terraform creates the OKE/networking baseline and configures the
-Identity Domain confidential application and identity-propagation trust. Use
-OCI Resource Manager for the production path.
+The Terraform configuration in `deploy/terraform/` creates the
+OKE/networking baseline and configures the Identity Domain confidential
+application and identity-propagation trust.
 
-1. Create a ZIP archive from the contents of
-   `projects/oci-management-portal/deploy/terraform/`.
-2. In OCI Console, create a Resource Manager stack by uploading that ZIP and
-   select `${DEPLOYMENT_COMPARTMENT_OCID}` as its compartment.
-3. Supply the required variables, including:
+1. Create an ignored environment file from the supplied example:
+
+   ```bash
+   cp deploy/terraform/terraform.tfvars.example deploy/terraform/terraform.tfvars
+   ```
+
+2. Edit `deploy/terraform/terraform.tfvars` and supply the required variables:
 
    | Terraform variable | Value |
    | --- | --- |
@@ -179,14 +181,30 @@ OCI Resource Manager for the production path.
    | `worker_ssh_public_key` | Operator public key, if node access is needed |
    | Worker shape, OCPU, memory, and Kubernetes version | Values approved for the environment |
 
-4. Review the networking inputs before applying, particularly API endpoint
+3. Review the networking inputs before applying, particularly API endpoint
    exposure, permitted ingress CIDRs, and whether the load balancer is public.
-5. Plan and apply the stack. Record these outputs securely:
+4. Initialize, plan, and apply from the Terraform directory:
+
+   ```bash
+   terraform -chdir=deploy/terraform init
+   terraform -chdir=deploy/terraform plan -out tfplan
+   terraform -chdir=deploy/terraform apply tfplan
+   ```
+
+5. Record these outputs securely:
 
    - `identity_domain_endpoint`
    - `confidential_application_client_id`
    - `confidential_application_client_secret`
    - OKE cluster OCID/name, if exposed by the stack or Console
+
+   Set the non-secret chart inputs from the Terraform outputs before deploying
+   the Portal:
+
+   ```bash
+   export PORTAL_IDM_ENDPOINT="$(terraform -chdir=deploy/terraform output -raw identity_domain_endpoint)"
+   export PORTAL_CLIENT_ID="$(terraform -chdir=deploy/terraform output -raw confidential_application_client_id)"
+   ```
 
 If the initial Portal URL is temporary, update the Identity Domain redirect URI
 and post-logout URI after the final load balancer or ingress URL is known. The
@@ -217,7 +235,7 @@ multi-architecture image for mixed pools.
 
 ### Create OCIR repositories and authenticate
 
-Create the two OCIR repositories if they do not already exist. The repository
+Create the three OCIR repositories if they do not already exist. The repository
 names may contain a path; create the same path used in the image reference.
 
 ```bash
@@ -228,6 +246,10 @@ oci artifacts container repository create \
 oci artifacts container repository create \
   --compartment-id "${DEPLOYMENT_COMPARTMENT_OCID}" \
   --display-name "${TAG_UPDATER_REPOSITORY}"
+
+oci artifacts container repository create \
+  --compartment-id "${DEPLOYMENT_COMPARTMENT_OCID}" \
+  --display-name "${EXTIRPATER_REPOSITORY}"
 ```
 
 If a repository already exists, continue. Generate an OCI auth token, then use
@@ -282,6 +304,18 @@ scripts/build-and-push-image.sh \
   --platform linux/arm64
 ```
 
+Build and publish Extirpater before installing its chart:
+
+```bash
+scripts/build-and-push-image.sh \
+  --project projects/ociextirpater \
+  --repository "${EXTIRPATER_REPOSITORY}" \
+  --region "${OCI_REGION}" \
+  --namespace "${OCIR_NAMESPACE}" \
+  --tag "${EXTIRPATER_TAG}" \
+  --platform linux/arm64
+```
+
 For mixed node architectures, replace the platform value with
 `linux/amd64,linux/arm64`. See [scripts/README.md](scripts/README.md) for all
 options.
@@ -306,7 +340,7 @@ unset OCIR_AUTH_TOKEN
 ```
 
 Create a Kubernetes secret for the confidential application client secret. The
-value comes from the Resource Manager output and should not be committed.
+value comes from the Terraform output and should not be committed.
 
 ```bash
 read -r -s -p 'Portal OIDC client secret: ' PORTAL_CLIENT_SECRET
@@ -330,23 +364,24 @@ where possible.
 
 ### Install the Helm release
 
-Create an uncommitted values file from
-`projects/oci-management-portal/deploy/helm/oci-management-portal/my-values.yaml`.
-Set the image, public URL, tag settings, Identity Domain endpoint/client ID,
-cleanup compartment, and session backend. For more than one Portal replica,
-use Redis or Valkey rather than filesystem sessions.
+Create `deploy/helm/oci-management-portal/values.local.yaml` from the chart's
+safe `values.yaml` defaults. Set the image, public URL, tag settings, Identity
+Domain endpoint/client ID, cleanup compartment, and session backend. Set
+`secret.create=false` and `secret.existingSecret=oci-management-portal-secrets`
+because the client secret was created separately. For more than one Portal
+replica, use Redis or Valkey rather than filesystem sessions.
 
 ```bash
 helm upgrade --install oci-management-portal \
-  ./projects/oci-management-portal/deploy/helm/oci-management-portal \
+  ./deploy/helm/oci-management-portal \
   --namespace "${PORTAL_NAMESPACE}" \
-  -f /secure/path/portal-values.yaml \
+  -f deploy/helm/oci-management-portal/values.local.yaml \
   --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${PORTAL_REPOSITORY}" \
   --set-string image.tag="${PORTAL_TAG}" \
   --set-string config.appUri="${PORTAL_URL}" \
   --set-string config.cleanupCompartment="${CLEANUP_COMPARTMENT_OCID}" \
-  --set-string config.idmEndpoint="<identity-domain-endpoint>" \
-  --set-string config.clientId="<confidential-application-client-id>"
+  --set-string config.idmEndpoint="${PORTAL_IDM_ENDPOINT}" \
+  --set-string config.clientId="${PORTAL_CLIENT_ID}"
 ```
 
 ## Deploy Tag Updater
@@ -405,7 +440,7 @@ intended.
 
 ```bash
 helm upgrade --install tag-updater \
-  ./projects/tag-updater/deploy/helm/tag-updater \
+  ./deploy/helm/tag-updater \
   --namespace "${TAG_UPDATER_NAMESPACE}" \
   --set image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${TAG_UPDATER_REPOSITORY}" \
   --set image.tag="${TAG_UPDATER_TAG}" \
@@ -433,27 +468,61 @@ kubectl logs --namespace "${TAG_UPDATER_NAMESPACE}" job/tag-updater-smoke-test
 
 ## Deploy Extirpater
 
-Skip this section unless scheduled resource deletion has been approved. Unlike
-the other components, Extirpater does not run on OKE and does not use an OCIR
-image. Its Terraform deploys a Compute instance, network resources as needed,
-and OCI Resource Scheduler schedules.
+Skip this section unless scheduled resource deletion has been approved.
+Extirpater runs as an OKE CronJob from `deploy/helm/ociextirpater/`; its chart
+is suspended by default.
 
-1. Review
-   `projects/ociextirpater/deploy/sample.tfvars` and create a secure,
-   uncommitted tfvars file. At minimum set the tenancy/provider credentials,
-   `region`, `cleanup_compartment`, and the deployment-compartment options.
-2. Set `use_deployment_compartment=true` and provide a dedicated
-   `deployment_compartment` whenever possible.
-3. Configure `extirpater_tag` exclusions for resources that must never be
-   removed, for example `extirpater_skip = "true"`.
-4. Deploy the contents of `projects/ociextirpater/deploy/` through a separate
-   OCI Resource Manager stack, or use its documented native Terraform path.
-5. Before the first scheduled run, verify the Compute instance, dynamic group,
-   deletion policy scope, Resource Scheduler schedules, and cloud-init logs.
+1. Create an OCI workload-identity policy for the Extirpater service account.
+   Scope it to the target cleanup compartments and resource families wherever
+   OCI policy syntax permits; do not grant blanket tenancy management unless
+   that is the explicitly approved cleanup scope.
+2. Create the namespace and an OCIR pull secret using the same workflow as Tag
+   Updater:
 
-Extirpater's default cleanup cron runs at `00:00`; its instance scheduler starts
-the host before the job. Do not regard a successful Terraform apply as approval
-to delete resources—review both the schedule and the cleanup target first.
+   ```bash
+   export EXTIRPATER_NAMESPACE="ociextirpater"
+   kubectl create namespace "${EXTIRPATER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+   read -r -s -p 'OCIR auth token: ' OCIR_AUTH_TOKEN
+   printf '\n'
+   kubectl create secret docker-registry ocir-pull-secret \
+     --namespace "${EXTIRPATER_NAMESPACE}" \
+     --docker-server="${REGISTRY}" \
+     --docker-username="${OCIR_USERNAME}" \
+     --docker-password="${OCIR_AUTH_TOKEN}" \
+     --dry-run=client -o yaml | kubectl apply -f -
+   unset OCIR_AUTH_TOKEN
+   ```
+
+3. Create an ignored file at
+   `deploy/helm/ociextirpater/values.local.yaml`. Set the image, OCI tenancy,
+   one or more `config.compartments`, the required OKE workload-identity
+   service-account annotations, and a deliberately reviewed schedule. Keep
+   `cronJob.suspend: true`.
+4. Install the suspended release:
+
+   ```bash
+   helm upgrade --install ociextirpater \
+     ./deploy/helm/ociextirpater \
+     --namespace "${EXTIRPATER_NAMESPACE}" \
+     --values deploy/helm/ociextirpater/values.local.yaml \
+     --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
+     --set-string image.tag="${EXTIRPATER_TAG}"
+   ```
+
+5. Confirm the CronJob is suspended and inspect its rendered configuration:
+
+   ```bash
+   kubectl get cronjob ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
+   helm template ociextirpater ./deploy/helm/ociextirpater \
+     --namespace "${EXTIRPATER_NAMESPACE}" \
+     --values deploy/helm/ociextirpater/values.local.yaml
+   ```
+
+Only after independently validating the target compartments, object categories,
+workload identity, IAM policy, image, and schedule, set `cronJob.suspend: false`
+in the local values file and run `helm upgrade` again. A successful installation
+is not approval to delete resources.
 
 ## Validate the environment
 
@@ -483,10 +552,14 @@ name mismatch before changing the job's IAM scope.
 
 ### Extirpater
 
-Inspect the instance's `/var/log/ociextirpater/` logs after a controlled test
-run. Confirm excluded resources remain untouched and the cleanup target is the
-intended compartment. The Extirpater component guide lists cloud-init and
-network diagnostics for bootstrap failures.
+Confirm the CronJob remains suspended until it has been approved. After a
+controlled run, inspect the Job logs and confirm the cleanup target is the
+intended compartment:
+
+```bash
+kubectl get cronjob,jobs --namespace "${EXTIRPATER_NAMESPACE}"
+kubectl logs --namespace "${EXTIRPATER_NAMESPACE}" job/<job-name>
+```
 
 ## Operate and update the release
 
@@ -501,8 +574,8 @@ The umbrella repository pins exact component revisions. To upgrade a component:
    prior image.
 
 Do not rely on `latest` in production. Record the umbrella commit, all three
-submodule commits, image tags/digests, Resource Manager job IDs, Helm release
-revisions, and the applied IAM policy names in the change record.
+submodule commits, image tags/digests, Terraform plan/apply metadata, Helm
+release revisions, and the applied IAM policy names in the change record.
 
 ## Troubleshooting
 
@@ -513,8 +586,7 @@ revisions, and the applied IAM policy names in the change record.
 | Portal login redirects or fails | Verify `${PORTAL_URL}/callback`, Identity Domain endpoint/client ID/client secret, and proxy configuration. |
 | Portal pod starts but OCI calls fail | Check configured auth type, runtime dynamic-group membership, and least-privilege IAM policies. |
 | Tag Updater job fails authentication | Verify enhanced OKE/workload identity, cluster OCID, namespace, service-account name, and IAM policy conditions. |
-| Extirpater does not run | Check Resource Scheduler schedules, instance state, cloud-init logs, and `/var/log/ociextirpater/`. |
+| Extirpater does not run | Check whether the CronJob is suspended, its schedule, Job events, image pull secret, and workload-identity IAM policy. |
 
-For detailed component behavior, use the component guides linked at the start
-of this document rather than modifying the umbrella guide to duplicate their
-implementation details.
+For component behavior and troubleshooting beyond this deployment flow, consult
+the source project documentation pinned under `projects/`.
