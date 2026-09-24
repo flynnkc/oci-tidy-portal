@@ -51,3 +51,9 @@ Review and commit the resulting submodule-reference updates deliberately; the um
 Reusable workspace tasks live in [`scripts/`](scripts/). See the
 [helper-script guide](scripts/README.md), including the OCIR image build and
 push helper.
+
+## Deployment
+
+Use the [umbrella deployment guide](DEPLOYMENT_GUIDE.md) for the ordered,
+end-to-end production deployment of the Portal and its optional Tag Updater and
+Extirpater components.

@@ -1,0 +1,520 @@
+# OCI Tidy Portal Deployment Guide
+
+This is the production deployment runbook for the OCI Tidy Portal workspace.
+It deploys and connects the independently versioned projects pinned by this
+umbrella repository:
+
+| Component | Deployment target | Purpose |
+| --- | --- | --- |
+| OCI Management Portal | Helm on OKE | Authenticated interface for resource discovery and lifecycle actions |
+| Tag Updater | Helm CronJob on OKE | Periodically updates defined-tag defaults |
+| OCI Extirpater | Compute instance provisioned by Terraform/Resource Manager | Scheduled cleanup of a selected compartment |
+
+The Portal is the primary deployment. Tag Updater and Extirpater are optional,
+independent automation components; deploy either only after approving its IAM
+scope and schedule. In particular, Extirpater deletes resources and its target
+compartment must be reviewed carefully.
+
+For component-specific configuration and troubleshooting, use the pinned
+source documents:
+
+- [Portal deployment guide](projects/oci-management-portal/DEPLOYMENT_GUIDE.md)
+- [Tag Updater guide](projects/tag-updater/README.md)
+- [Extirpater deployment guide](projects/ociextirpater/deploy/README.md)
+
+## Table of Contents
+
+1. [Deployment architecture and order](#deployment-architecture-and-order)
+2. [Prerequisites](#prerequisites)
+3. [Prepare the pinned release](#prepare-the-pinned-release)
+4. [Collect configuration inputs](#collect-configuration-inputs)
+5. [Provision Portal infrastructure](#provision-portal-infrastructure)
+6. [Prepare OKE and OCIR](#prepare-oke-and-ocir)
+7. [Build and publish images](#build-and-publish-images)
+8. [Deploy the Portal](#deploy-the-portal)
+9. [Deploy Tag Updater](#deploy-tag-updater)
+10. [Deploy Extirpater](#deploy-extirpater)
+11. [Validate the environment](#validate-the-environment)
+12. [Operate and update the release](#operate-and-update-the-release)
+13. [Troubleshooting](#troubleshooting)
+
+## Deployment architecture and order
+
+```text
+Umbrella repository (pinned submodule commits)
+  ├── Portal Terraform → OCI Identity Domain, networking, OKE, IAM baseline
+  ├── OCIR ← Portal image + Tag Updater image
+  ├── Portal Helm chart → OKE Deployment + Service
+  ├── Tag Updater Helm chart → OKE CronJob + workload identity
+  └── Extirpater Terraform → scheduled Compute cleanup host
+```
+
+Use this order for a new environment:
+
+1. Clone the umbrella release and initialize the exact submodule revisions.
+2. Decide the managed tags, cleanup compartment, and which optional automation
+   components are approved.
+3. Provision the Portal's OKE, networking, Identity Domain application, and
+   baseline IAM with OCI Resource Manager.
+4. Create OCIR repositories, publish the Portal image, and deploy the Portal.
+5. Optionally publish and deploy Tag Updater after creating workload-identity
+   policies.
+6. Optionally deploy Extirpater into a compartment distinct from its cleanup
+   target, with its schedule and delete permissions reviewed first.
+
+## Prerequisites
+
+### OCI access
+
+The deployment operator needs access to create or use the following in the
+target tenancy:
+
+- a deployment compartment for OKE, networking, load balancers, and optional
+  Extirpater infrastructure;
+- a cleanup compartment, including approval to perform lifecycle actions there;
+- an OCI Identity Domain for the Portal's confidential OIDC application;
+- OCIR repositories;
+- IAM policies, dynamic groups, and OKE workload-identity policies;
+- OCI Resource Manager stacks and jobs.
+
+Use a dedicated deployment compartment where practical. Do not use that same
+compartment as Extirpater's cleanup target unless the resulting deletion scope
+is explicitly intended and approved.
+
+### Operator workstation
+
+Install and configure:
+
+- Git with submodule support;
+- OCI CLI, authenticated to the target tenancy;
+- OCI Console/Resource Manager access;
+- `kubectl` and `helm` for the target OKE cluster;
+- Docker with Buildx or Podman;
+- `zip` when uploading Terraform source to Resource Manager.
+
+The workspace helper scripts are Bash scripts. On Windows, run them from WSL,
+not PowerShell or Command Prompt, and ensure Docker or Podman is accessible
+inside the WSL distribution.
+
+### OCI design decisions to make before deployment
+
+- OCI region and tenancy home region;
+- deployment and cleanup compartment OCIDs;
+- OKE worker architecture (`linux/arm64`, `linux/amd64`, or both);
+- Portal public URL and TLS/ingress approach;
+- Identity Domain OCID;
+- defined-tag namespace/key and expiry namespace/key used by the Portal;
+- Tag Updater schedule, target compartments, and tag default values;
+- whether Extirpater is approved, its deployment compartment, cleanup target,
+  exclusions, and start/stop schedule.
+
+## Prepare the pinned release
+
+Clone and initialize all projects. This preserves the component revisions that
+were tested together in the umbrella repository.
+
+```bash
+git clone --recurse-submodules https://github.com/flynnkc/oci-tidy-portal.git
+cd oci-tidy-portal
+git submodule status
+```
+
+For an existing clone:
+
+```bash
+git submodule update --init --recursive
+git submodule status
+```
+
+The output must show a commit for each project without a leading `-`. Do not
+use `git submodule update --remote` for a production deployment unless you are
+intentionally creating and validating a new umbrella release.
+
+## Collect configuration inputs
+
+Set non-secret, session-scoped values before starting. Replace every placeholder
+with an environment-specific value.
+
+```bash
+export OCI_REGION="us-ashburn-1"
+export OCI_HOME_REGION="<tenancy-home-region>"
+export TENANCY_OCID="ocid1.tenancy.oc1..<unique-id>"
+export DEPLOYMENT_COMPARTMENT_OCID="ocid1.compartment.oc1..<unique-id>"
+export CLEANUP_COMPARTMENT_OCID="ocid1.compartment.oc1..<unique-id>"
+export IDENTITY_DOMAIN_OCID="ocid1.domain.oc1..<unique-id>"
+export PORTAL_URL="https://portal.example.com"
+export TAG_NAMESPACE="Usage-Management"
+export TAG_KEY="Owner"
+export EXPIRY_NAMESPACE="Usage-Management"
+export EXPIRY_KEY="Expires"
+export OCIR_NAMESPACE="$(oci os ns get --query data --raw-output)"
+export REGISTRY="ocir.${OCI_REGION}.oci.oraclecloud.com"
+export PORTAL_REPOSITORY="oci-management-portal"
+export TAG_UPDATER_REPOSITORY="tag-updater"
+export PORTAL_TAG="$(git -C projects/oci-management-portal rev-parse --short HEAD)"
+export TAG_UPDATER_TAG="$(git -C projects/tag-updater rev-parse --short HEAD)"
+```
+
+Keep secrets out of shell history, Helm values committed to Git, and terminal
+output. You will need an OCIR auth token and an Identity Domain client secret.
+
+## Provision Portal infrastructure
+
+The Portal Terraform creates the OKE/networking baseline and configures the
+Identity Domain confidential application and identity-propagation trust. Use
+OCI Resource Manager for the production path.
+
+1. Create a ZIP archive from the contents of
+   `projects/oci-management-portal/deploy/terraform/`.
+2. In OCI Console, create a Resource Manager stack by uploading that ZIP and
+   select `${DEPLOYMENT_COMPARTMENT_OCID}` as its compartment.
+3. Supply the required variables, including:
+
+   | Terraform variable | Value |
+   | --- | --- |
+   | `compartment_ocid` | `${DEPLOYMENT_COMPARTMENT_OCID}` |
+   | `identity_domain_id` | `${IDENTITY_DOMAIN_OCID}` |
+   | `label` | A unique environment prefix, such as `tidy-prod` |
+   | `confidential_application_base_url` | `${PORTAL_URL}` |
+   | `worker_ssh_public_key` | Operator public key, if node access is needed |
+   | Worker shape, OCPU, memory, and Kubernetes version | Values approved for the environment |
+
+4. Review the networking inputs before applying, particularly API endpoint
+   exposure, permitted ingress CIDRs, and whether the load balancer is public.
+5. Plan and apply the stack. Record these outputs securely:
+
+   - `identity_domain_endpoint`
+   - `confidential_application_client_id`
+   - `confidential_application_client_secret`
+   - OKE cluster OCID/name, if exposed by the stack or Console
+
+If the initial Portal URL is temporary, update the Identity Domain redirect URI
+and post-logout URI after the final load balancer or ingress URL is known. The
+callback URL is `${PORTAL_URL}/callback`.
+
+## Prepare OKE and OCIR
+
+### Configure Kubernetes access
+
+Use the OKE cluster page in OCI Console to obtain the cluster's kubeconfig
+access command, then verify connectivity:
+
+```bash
+kubectl config current-context
+kubectl get nodes
+kubectl get pods -A
+```
+
+Confirm worker architecture before building images:
+
+```bash
+kubectl get nodes -o wide
+kubectl get nodes -o jsonpath='{range .items[*]}{.status.nodeInfo.architecture}{"\n"}{end}'
+```
+
+Build `linux/arm64` for arm64 nodes, `linux/amd64` for amd64 nodes, or a
+multi-architecture image for mixed pools.
+
+### Create OCIR repositories and authenticate
+
+Create the two OCIR repositories if they do not already exist. The repository
+names may contain a path; create the same path used in the image reference.
+
+```bash
+oci artifacts container repository create \
+  --compartment-id "${DEPLOYMENT_COMPARTMENT_OCID}" \
+  --display-name "${PORTAL_REPOSITORY}"
+
+oci artifacts container repository create \
+  --compartment-id "${DEPLOYMENT_COMPARTMENT_OCID}" \
+  --display-name "${TAG_UPDATER_REPOSITORY}"
+```
+
+If a repository already exists, continue. Generate an OCI auth token, then use
+the helper's `--login` option to authenticate without placing the token in a
+command argument:
+
+```bash
+export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
+scripts/build-and-push-image.sh --login \
+  --project projects/oci-management-portal \
+  --repository "${PORTAL_REPOSITORY}" \
+  --region "${OCI_REGION}" \
+  --namespace "${OCIR_NAMESPACE}" \
+  --tag "${PORTAL_TAG}" \
+  --platform linux/arm64
+```
+
+The first command above also builds and pushes the Portal image. If you do not
+want the helper to prompt, provide `OCIR_AUTH_TOKEN` only for the current shell
+session. Consult the [OCIR username guidance](https://docs.oracle.com/en-us/iaas/Content/Registry/Tasks/registrypushingimagesusingthedockercli.htm)
+for the exact default-domain or identity-domain username format.
+
+## Build and publish images
+
+Use the workspace helper rather than duplicating Docker/Podman commands. It
+supports Docker Buildx, Podman, OCIR namespace lookup, and multi-architecture
+manifests. Pass `--engine podman` to select Podman; otherwise `auto` selects
+Docker when available.
+
+The Portal image may already have been pushed in the login command above. To
+build it separately, omit `--login`:
+
+```bash
+scripts/build-and-push-image.sh \
+  --project projects/oci-management-portal \
+  --repository "${PORTAL_REPOSITORY}" \
+  --region "${OCI_REGION}" \
+  --namespace "${OCIR_NAMESPACE}" \
+  --tag "${PORTAL_TAG}" \
+  --platform linux/arm64
+```
+
+Build and publish Tag Updater when that optional component is approved:
+
+```bash
+scripts/build-and-push-image.sh \
+  --project projects/tag-updater \
+  --repository "${TAG_UPDATER_REPOSITORY}" \
+  --region "${OCI_REGION}" \
+  --namespace "${OCIR_NAMESPACE}" \
+  --tag "${TAG_UPDATER_TAG}" \
+  --platform linux/arm64
+```
+
+For mixed node architectures, replace the platform value with
+`linux/amd64,linux/arm64`. See [scripts/README.md](scripts/README.md) for all
+options.
+
+## Deploy the Portal
+
+### Create the namespace and image-pull secret
+
+```bash
+export PORTAL_NAMESPACE="oci-management-portal"
+kubectl create namespace "${PORTAL_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+read -r -s -p 'OCIR auth token: ' OCIR_AUTH_TOKEN
+printf '\n'
+kubectl create secret docker-registry ocirsecret \
+  --namespace "${PORTAL_NAMESPACE}" \
+  --docker-server="${REGISTRY}" \
+  --docker-username="${OCIR_USERNAME}" \
+  --docker-password="${OCIR_AUTH_TOKEN}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+unset OCIR_AUTH_TOKEN
+```
+
+Create a Kubernetes secret for the confidential application client secret. The
+value comes from the Resource Manager output and should not be committed.
+
+```bash
+read -r -s -p 'Portal OIDC client secret: ' PORTAL_CLIENT_SECRET
+printf '\n'
+kubectl create secret generic oci-management-portal-secrets \
+  --namespace "${PORTAL_NAMESPACE}" \
+  --from-literal=OCI_MGMT_DASH_CLIENT_SECRET="${PORTAL_CLIENT_SECRET}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+unset PORTAL_CLIENT_SECRET
+```
+
+### Configure runtime IAM
+
+The Portal uses the signed-in user's context for Portal actions. Cost and usage
+operations use its configured runtime identity. For the documented
+`instance_principal` configuration, create a dynamic group containing the OKE
+worker nodes (or their compartment) and grant only the OCI permissions required
+by the features you enable. Start with the Portal component guide's runtime IAM
+section, then scope policies to the cleanup compartment rather than tenancy
+where possible.
+
+### Install the Helm release
+
+Create an uncommitted values file from
+`projects/oci-management-portal/deploy/helm/oci-management-portal/my-values.yaml`.
+Set the image, public URL, tag settings, Identity Domain endpoint/client ID,
+cleanup compartment, and session backend. For more than one Portal replica,
+use Redis or Valkey rather than filesystem sessions.
+
+```bash
+helm upgrade --install oci-management-portal \
+  ./projects/oci-management-portal/deploy/helm/oci-management-portal \
+  --namespace "${PORTAL_NAMESPACE}" \
+  -f /secure/path/portal-values.yaml \
+  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${PORTAL_REPOSITORY}" \
+  --set-string image.tag="${PORTAL_TAG}" \
+  --set-string config.appUri="${PORTAL_URL}" \
+  --set-string config.cleanupCompartment="${CLEANUP_COMPARTMENT_OCID}" \
+  --set-string config.idmEndpoint="<identity-domain-endpoint>" \
+  --set-string config.clientId="<confidential-application-client-id>"
+```
+
+## Deploy Tag Updater
+
+Skip this section if periodic tag-default updates are not approved. The
+recommended OKE path is an enhanced OKE cluster using workload identity.
+
+### Create the workload-identity policy
+
+Obtain the cluster OCID and choose the Kubernetes namespace/service-account
+names. The chart's default service-account name is the release name,
+`tag-updater`. Create IAM policies following this pattern, with the exact
+cluster OCID and names:
+
+```text
+Allow any-user to manage tag-defaults in tenancy where all {
+  request.principal.type = 'workload',
+  request.principal.namespace = 'tag-updater',
+  request.principal.service_account = 'tag-updater',
+  request.principal.cluster_id = '<cluster-ocid>'
+}
+Allow any-user to use tag-namespaces in tenancy where all {
+  request.principal.type = 'workload',
+  request.principal.namespace = 'tag-updater',
+  request.principal.service_account = 'tag-updater',
+  request.principal.cluster_id = '<cluster-ocid>'
+}
+```
+
+Narrow policy scope where OCI policy syntax supports it. Review the policy
+before applying: Tag Updater can change tag defaults in every permitted scope.
+
+### Create the namespace and pull secret
+
+```bash
+export TAG_UPDATER_NAMESPACE="tag-updater"
+kubectl create namespace "${TAG_UPDATER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+read -r -s -p 'OCIR auth token: ' OCIR_AUTH_TOKEN
+printf '\n'
+kubectl create secret docker-registry ocir-pull-secret \
+  --namespace "${TAG_UPDATER_NAMESPACE}" \
+  --docker-server="${REGISTRY}" \
+  --docker-username="${OCIR_USERNAME}" \
+  --docker-password="${OCIR_AUTH_TOKEN}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+unset OCIR_AUTH_TOKEN
+```
+
+### Install the CronJob
+
+Review the schedule before running this command; the chart default is daily at
+midnight. Set `config.compartments` only when the job must be constrained to
+specific compartments. Omit it only when tenancy-wide tag-default updates are
+intended.
+
+```bash
+helm upgrade --install tag-updater \
+  ./projects/tag-updater/deploy/helm/tag-updater \
+  --namespace "${TAG_UPDATER_NAMESPACE}" \
+  --set image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${TAG_UPDATER_REPOSITORY}" \
+  --set image.tag="${TAG_UPDATER_TAG}" \
+  --set config.tagNamespace="${TAG_NAMESPACE}" \
+  --set config.tagKey="${EXPIRY_KEY}" \
+  --set config.ociSigner="WORKLOAD_IDENTITY" \
+  --set config.ociIdentityRegion="${OCI_HOME_REGION}" \
+  --set config.ociResourcePrincipalRegion="${OCI_REGION}" \
+  --set config.ociTenancyId="${TENANCY_OCID}" \
+  --set imagePullSecrets=ocir-pull-secret
+```
+
+`config.tagKey` is the defined tag whose default Tag Updater changes. It need
+not be the Portal's owner tag; in the example above it is the expiry key. Set
+it deliberately for the desired lifecycle model.
+
+Run an immediate, observable test before relying on the schedule:
+
+```bash
+kubectl create job --from=cronjob/tag-updater tag-updater-smoke-test \
+  --namespace "${TAG_UPDATER_NAMESPACE}"
+kubectl get jobs --namespace "${TAG_UPDATER_NAMESPACE}"
+kubectl logs --namespace "${TAG_UPDATER_NAMESPACE}" job/tag-updater-smoke-test
+```
+
+## Deploy Extirpater
+
+Skip this section unless scheduled resource deletion has been approved. Unlike
+the other components, Extirpater does not run on OKE and does not use an OCIR
+image. Its Terraform deploys a Compute instance, network resources as needed,
+and OCI Resource Scheduler schedules.
+
+1. Review
+   `projects/ociextirpater/deploy/sample.tfvars` and create a secure,
+   uncommitted tfvars file. At minimum set the tenancy/provider credentials,
+   `region`, `cleanup_compartment`, and the deployment-compartment options.
+2. Set `use_deployment_compartment=true` and provide a dedicated
+   `deployment_compartment` whenever possible.
+3. Configure `extirpater_tag` exclusions for resources that must never be
+   removed, for example `extirpater_skip = "true"`.
+4. Deploy the contents of `projects/ociextirpater/deploy/` through a separate
+   OCI Resource Manager stack, or use its documented native Terraform path.
+5. Before the first scheduled run, verify the Compute instance, dynamic group,
+   deletion policy scope, Resource Scheduler schedules, and cloud-init logs.
+
+Extirpater's default cleanup cron runs at `00:00`; its instance scheduler starts
+the host before the job. Do not regard a successful Terraform apply as approval
+to delete resources—review both the schedule and the cleanup target first.
+
+## Validate the environment
+
+### Portal
+
+```bash
+kubectl rollout status deployment/oci-management-portal --namespace "${PORTAL_NAMESPACE}"
+kubectl get pods,svc --namespace "${PORTAL_NAMESPACE}"
+kubectl logs deployment/oci-management-portal --namespace "${PORTAL_NAMESPACE}" --tail=100
+```
+
+Open `${PORTAL_URL}`, complete an OIDC login, and validate the least-privilege
+workflow in a non-production test compartment before performing lifecycle
+actions in the cleanup target. Confirm the callback URL is exactly
+`${PORTAL_URL}/callback` in the Identity Domain application.
+
+### Tag Updater
+
+```bash
+kubectl get cronjob,jobs --namespace "${TAG_UPDATER_NAMESPACE}"
+kubectl logs --namespace "${TAG_UPDATER_NAMESPACE}" job/tag-updater-smoke-test
+```
+
+Verify the tag default changed only in the intended scope. Investigate any
+authentication error as a workload-identity policy or service-account/cluster
+name mismatch before changing the job's IAM scope.
+
+### Extirpater
+
+Inspect the instance's `/var/log/ociextirpater/` logs after a controlled test
+run. Confirm excluded resources remain untouched and the cleanup target is the
+intended compartment. The Extirpater component guide lists cloud-init and
+network diagnostics for bootstrap failures.
+
+## Operate and update the release
+
+The umbrella repository pins exact component revisions. To upgrade a component:
+
+1. Update and test that submodule in its own repository.
+2. Commit and push the submodule change there.
+3. Update the umbrella submodule reference and commit it as a new umbrella
+   release.
+4. Build images from the new pinned revision using a new immutable tag.
+5. Run `helm upgrade` with the new tag and validate rollout before retiring the
+   prior image.
+
+Do not rely on `latest` in production. Record the umbrella commit, all three
+submodule commits, image tags/digests, Resource Manager job IDs, Helm release
+revisions, and the applied IAM policy names in the change record.
+
+## Troubleshooting
+
+| Symptom | Initial checks |
+| --- | --- |
+| `exec format error` in a pod | Compare node architecture with the image platform; rebuild for the target architecture or publish a multi-architecture manifest. |
+| Pod cannot pull from OCIR | Check registry host, image repository/tag, `ocirsecret`, OCIR username format, auth token, and repository permissions. |
+| Portal login redirects or fails | Verify `${PORTAL_URL}/callback`, Identity Domain endpoint/client ID/client secret, and proxy configuration. |
+| Portal pod starts but OCI calls fail | Check configured auth type, runtime dynamic-group membership, and least-privilege IAM policies. |
+| Tag Updater job fails authentication | Verify enhanced OKE/workload identity, cluster OCID, namespace, service-account name, and IAM policy conditions. |
+| Extirpater does not run | Check Resource Scheduler schedules, instance state, cloud-init logs, and `/var/log/ociextirpater/`. |
+
+For detailed component behavior, use the component guides linked at the start
+of this document rather than modifying the umbrella guide to duplicate their
+implementation details.
