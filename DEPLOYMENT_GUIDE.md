@@ -154,9 +154,6 @@ export TAG_UPDATER_TAG="$(git -C projects/tag-updater rev-parse --short HEAD)"
 export EXTIRPATER_TAG="$(git -C projects/ociextirpater rev-parse --short HEAD)"
 ```
 
-Keep secrets out of shell history, Helm values committed to Git, and terminal
-output. You will need an OCIR auth token and an Identity Domain client secret.
-
 ## Provision Portal infrastructure
 
 The Terraform configuration in `deploy/terraform/` creates the
