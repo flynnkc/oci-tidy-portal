@@ -146,7 +146,6 @@ export TAG_KEY="Owner"
 export EXPIRY_NAMESPACE="Usage-Management"
 export EXPIRY_KEY="Expires"
 export OCIR_NAMESPACE="$(oci os ns get --query data --raw-output)"
-export REGISTRY="ocir.${OCI_REGION}.oci.oraclecloud.com"
 export PORTAL_REPOSITORY="oci-management-portal"
 export TAG_UPDATER_REPOSITORY="tag-updater"
 export EXTIRPATER_REPOSITORY="ociextirpater"
@@ -259,60 +258,31 @@ command argument:
 ```bash
 export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
 scripts/build-and-push-image.sh --login \
-  --project projects/oci-management-portal \
-  --repository "${PORTAL_REPOSITORY}" \
   --region "${OCI_REGION}" \
   --namespace "${OCIR_NAMESPACE}" \
-  --tag "${PORTAL_TAG}" \
   --platform linux/arm64
 ```
 
-The first command above also builds and pushes the Portal image. If you do not
-want the helper to prompt, provide `OCIR_AUTH_TOKEN` only for the current shell
-session. Consult the [OCIR username guidance](https://docs.oracle.com/en-us/iaas/Content/Registry/Tasks/registrypushingimagesusingthedockercli.htm)
+The command above logs in, then builds and pushes all three images. If you do
+not want the helper to prompt, provide `OCIR_AUTH_TOKEN` only for the current
+shell session. Consult the [OCIR username guidance](https://docs.oracle.com/en-us/iaas/Content/Registry/Tasks/registrypushingimagesusingthedockercli.htm)
 for the exact default-domain or identity-domain username format.
 
 ## Build and publish images
 
-Use the workspace helper rather than duplicating Docker/Podman commands. It
+Use the workspace helper rather than duplicating Docker/Podman commands. One
+invocation builds and publishes the Dockerfiles in all three submodules. It
 supports Docker Buildx, Podman, OCIR namespace lookup, and multi-architecture
 manifests. Pass `--engine podman` to select Podman; otherwise `auto` selects
-Docker when available.
+Docker when available. Each image defaults to its submodule's short Git SHA;
+use `--tag` to apply one tag to every image, or `--*-tag` to override one image.
 
-The Portal image may already have been pushed in the login command above. To
-build it separately, omit `--login`:
-
-```bash
-scripts/build-and-push-image.sh \
-  --project projects/oci-management-portal \
-  --repository "${PORTAL_REPOSITORY}" \
-  --region "${OCI_REGION}" \
-  --namespace "${OCIR_NAMESPACE}" \
-  --tag "${PORTAL_TAG}" \
-  --platform linux/arm64
-```
-
-Build and publish Tag Updater when that optional component is approved:
+After logging in, build and publish all images again when needed:
 
 ```bash
 scripts/build-and-push-image.sh \
-  --project projects/tag-updater \
-  --repository "${TAG_UPDATER_REPOSITORY}" \
   --region "${OCI_REGION}" \
   --namespace "${OCIR_NAMESPACE}" \
-  --tag "${TAG_UPDATER_TAG}" \
-  --platform linux/arm64
-```
-
-Build and publish Extirpater before installing its chart:
-
-```bash
-scripts/build-and-push-image.sh \
-  --project projects/ociextirpater \
-  --repository "${EXTIRPATER_REPOSITORY}" \
-  --region "${OCI_REGION}" \
-  --namespace "${OCIR_NAMESPACE}" \
-  --tag "${EXTIRPATER_TAG}" \
   --platform linux/arm64
 ```
 
