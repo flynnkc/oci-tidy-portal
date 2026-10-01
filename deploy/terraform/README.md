@@ -66,7 +66,7 @@ If the application receives a new public load balancer URL after Helm deployment
 
 - **VCN CIDR**: `10.0.0.0/16`
 - **Subnets**:
-  - API endpoint subnet: private (`subnet_endpoint_private`, `10.0.5.0/24`)
+  - API endpoint subnet: private by default, public when `enable_external_kubectl_access = true` (`subnet_endpoint_private`, `10.0.5.0/24`)
   - Load balancer subnet: public (`subnet_lb_public`, `10.0.10.0/24`)
   - Worker nodes subnet: private (`subnet_nodes_private`, `10.0.20.0/24`)
   - Additional private subnet: private (`subnet_addl_private`, `10.0.30.0/24`)
@@ -76,7 +76,14 @@ If the application receives a new public load balancer URL after Helm deployment
 
 ## Security and exposure controls
 
-- **OKE API endpoint exposure**: private endpoint protected by `nsg_endpoint`.
+- **OKE API endpoint exposure**: private by default. With `enable_external_kubectl_access = true`, the dedicated endpoint subnet uses the public route table, OKE assigns the endpoint a public IP, and its security list and `nsg_endpoint` admit TCP 6443 from `external_kubectl_access_cidr`. Set `create_endpoint_subnet = true` and supply a trusted source CIDR, preferably your public IP as `/32`.
 - **Load balancer ingress**: public load balancer subnet security list allows HTTP (80) and HTTPS (443).
 - **Worker networking**: `nsg_nodes` is attached to worker nodes and pods created through OCI VCN IP Native networking.
 
+For an existing private cluster, review the Resource Manager plan before applying
+the public-access setting. The endpoint subnet's private/public property is not
+updatable in the Terraform provider, so the plan can replace the subnet and
+cluster. To use the existing cluster without replacement, connect to its
+private endpoint through [OCI Bastion](https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengsettingupbastion.htm)
+or another route into the VCN. For a public cluster, generate kubeconfig for
+the `PUBLIC_ENDPOINT` and verify access from an address inside the allowed CIDR.

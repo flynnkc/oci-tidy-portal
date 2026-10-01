@@ -37,7 +37,7 @@ variable "compartment_ocid" {
 }
 
 variable "create_endpoint_subnet" {
-  description = "Create a dedicated private subnet for the OKE API endpoint"
+  description = "Create a dedicated subnet for the OKE API endpoint (required for public access)"
   type        = bool
   default     = true
 }
@@ -193,7 +193,7 @@ variable "k8s_version" {
 }
 
 variable "enable_external_kubectl_access" {
-  description = "Enable external kubectl access to the OKE API endpoint"
+  description = "Assign a public IP to the OKE API endpoint and allow external kubectl access"
   type        = bool
   default     = false
 }
@@ -266,4 +266,3 @@ variable "nodepool_size" {
   type    = number
   default = 1
 }
-

@@ -115,6 +115,51 @@ resource "oci_core_network_security_group_security_rule" "endpoint_api_ingress_f
   }
 }
 
+resource "oci_core_network_security_group_security_rule" "endpoint_api_ingress_external" {
+  count                     = var.enable_external_kubectl_access ? 1 : 0
+  network_security_group_id = oci_core_network_security_group.nsg_endpoint.id
+  direction                 = "INGRESS"
+  protocol                  = "6" # TCP
+  source_type               = "CIDR_BLOCK"
+  source                    = var.external_kubectl_access_cidr
+
+  tcp_options {
+    destination_port_range {
+      min = 6443
+      max = 6443
+    }
+  }
+}
+
+resource "oci_core_security_list" "sl_endpoint" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.vcn.id
+  display_name   = "sl-oke-endpoint"
+
+  egress_security_rules {
+    protocol    = "all"
+    destination = "0.0.0.0/0"
+  }
+
+  ingress_security_rules {
+    protocol = "all"
+    source   = "10.0.0.0/16"
+  }
+
+  dynamic "ingress_security_rules" {
+    for_each = var.enable_external_kubectl_access ? [1] : []
+    content {
+      protocol = "6" # TCP
+      source   = var.external_kubectl_access_cidr
+
+      tcp_options {
+        min = 6443
+        max = 6443
+      }
+    }
+  }
+}
+
 resource "oci_core_security_list" "sl_public_lb" {
   compartment_id = var.compartment_ocid
   vcn_id         = oci_core_vcn.vcn.id
@@ -198,10 +243,9 @@ resource "oci_core_subnet" "subnet_endpoint_private" {
   compartment_id             = var.compartment_ocid
   vcn_id                     = oci_core_vcn.vcn.id
   cidr_block                 = "10.0.5.0/24"
-  display_name               = "subnet-endpoint-private"
+  display_name               = var.enable_external_kubectl_access ? "subnet-endpoint-public" : "subnet-endpoint-private"
   dns_label                  = "endpt"
-  route_table_id             = oci_core_route_table.rt_private.id
-  security_list_ids          = [oci_core_security_list.sl_private_nodes.id]
-  prohibit_public_ip_on_vnic = true
+  route_table_id             = var.enable_external_kubectl_access ? oci_core_route_table.rt_public.id : oci_core_route_table.rt_private.id
+  security_list_ids          = [oci_core_security_list.sl_endpoint.id]
+  prohibit_public_ip_on_vnic = !var.enable_external_kubectl_access
 }
-

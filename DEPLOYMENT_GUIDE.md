@@ -55,7 +55,7 @@ Use this order for a new environment:
 2. Decide the managed tags, cleanup compartment, and which optional automation
    components are approved.
 3. Provision the Portal's OKE, networking, Identity Domain application, and
-   baseline IAM from `deploy/terraform`.
+   baseline IAM through OCI Resource Manager using `deploy/terraform`.
 4. Create OCIR repositories, publish the Portal image, and deploy the Portal.
 5. Optionally publish and deploy Tag Updater after creating workload-identity
    policies.
@@ -75,6 +75,7 @@ target tenancy:
 - an OCI Identity Domain for the Portal's confidential OIDC application;
 - OCIR repositories;
 - IAM policies, dynamic groups, and OKE workload-identity policies;
+- Resource Manager stacks and plan/apply jobs in the deployment compartment;
 
 Use a dedicated deployment compartment where practical. Do not use that same
 compartment as Extirpater's cleanup target unless the resulting deletion scope
@@ -158,49 +159,99 @@ export EXTIRPATER_TAG="$(git -C projects/ociextirpater rev-parse --short HEAD)"
 
 The Terraform configuration in `deploy/terraform/` creates the
 OKE/networking baseline and configures the Identity Domain confidential
-application and identity-propagation trust.
+application and identity-propagation trust. Use OCI Resource Manager for the
+deployment stack. The Terraform or OpenTofu CLI is a backup path for a separate
+deployment whose state is managed locally.
 
-1. Create an ignored environment file from the supplied example:
+Use these inputs for either method:
 
-   ```bash
-   cp deploy/terraform/terraform.tfvars.example deploy/terraform/terraform.tfvars
-   ```
+| Stack variable | Value |
+| --- | --- |
+| `compartment_ocid` | `${DEPLOYMENT_COMPARTMENT_OCID}` |
+| `identity_domain_id` | `${IDENTITY_DOMAIN_OCID}` |
+| `label` | A unique environment prefix, such as `tidy-prod` |
+| `confidential_application_base_url` | `${PORTAL_URL}` |
+| `worker_ssh_public_key` | Operator public key, if node access is needed |
+| Worker shape, OCPU, memory, and Kubernetes version | Values approved for the environment |
 
-2. Edit `deploy/terraform/terraform.tfvars` and supply the required variables:
+Review the networking inputs before applying, particularly API endpoint
+exposure, permitted ingress CIDRs, and load balancer ingress. The supplied
+`schema.yaml` presents the stack variables in Resource Manager.
 
-   | Terraform variable | Value |
-   | --- | --- |
-   | `compartment_ocid` | `${DEPLOYMENT_COMPARTMENT_OCID}` |
-   | `identity_domain_id` | `${IDENTITY_DOMAIN_OCID}` |
-   | `label` | A unique environment prefix, such as `tidy-prod` |
-   | `confidential_application_base_url` | `${PORTAL_URL}` |
-   | `worker_ssh_public_key` | Operator public key, if node access is needed |
-   | Worker shape, OCPU, memory, and Kubernetes version | Values approved for the environment |
+### Primary method: OCI Resource Manager
 
-3. Review the networking inputs before applying, particularly API endpoint
-   exposure, permitted ingress CIDRs, and whether the load balancer is public.
-4. Initialize, plan, and apply from the Terraform directory:
+**Deploy to Oracle Cloud button: coming soon.** The button will open OCI
+Resource Manager with this infrastructure configuration selected.
 
-   ```bash
-   terraform -chdir=deploy/terraform init
-   terraform -chdir=deploy/terraform plan -out tfplan
-   terraform -chdir=deploy/terraform apply tfplan
-   ```
+When the button is available:
 
-5. Record these outputs securely:
+1. Select **Deploy to Oracle Cloud** and sign in to the target tenancy. On
+   **Create stack**, select the deployment compartment, name the stack, and
+   choose a Terraform version supported by `deploy/terraform/versions.tf`.
+2. On **Configure variables**, enter the values above. Confirm the target
+   region and tenancy, and review the network and OKE settings. Do not enter
+   an API signing key in stack variables; Resource Manager authenticates the
+   provider for its jobs.
+3. On **Review**, clear **Run apply** so you can inspect the changes first,
+   then create the stack. Run a **Plan** job and review its proposed resources.
+   If it matches the intended deployment, run an **Apply** job and wait for it
+   to succeed.
+4. Open the completed apply job's **Outputs** page and record the values listed
+   under [Use the infrastructure outputs](#use-the-infrastructure-outputs).
 
-   - `identity_domain_endpoint`
-   - `confidential_application_client_id`
-   - `confidential_application_client_secret`
-   - OKE cluster OCID/name, if exposed by the stack or Console
+See Oracle's [button workflow](https://docs.oracle.com/en-us/iaas/Content/ResourceManager/Tasks/deploybutton.htm)
+and [job outputs instructions](https://docs.oracle.com/en-us/iaas/Content/ResourceManager/Tasks/list-job-outputs.htm)
+for the current Console screens.
 
-   Set the non-secret chart inputs from the Terraform outputs before deploying
-   the Portal:
+### Backup method: Terraform or OpenTofu CLI
 
-   ```bash
-   export PORTAL_IDM_ENDPOINT="$(terraform -chdir=deploy/terraform output -raw identity_domain_endpoint)"
-   export PORTAL_CLIENT_ID="$(terraform -chdir=deploy/terraform output -raw confidential_application_client_id)"
-   ```
+Use this method when the Resource Manager button is unavailable. Install
+Terraform (version 1.3 or later) or OpenTofu and configure OCI provider
+authentication for the target tenancy. Run the commands from the umbrella
+repository root:
+
+```bash
+cp deploy/terraform/terraform.tfvars.example deploy/terraform/terraform.tfvars
+```
+
+Edit the ignored `deploy/terraform/terraform.tfvars` with the inputs above.
+Set `tenancy_ocid` to the value of `TENANCY_OCID` and `region` to the value of
+`OCI_REGION`.
+Review the network settings in that file. Then select one CLI and apply:
+
+```bash
+export IAC_CLI=terraform # or tofu for OpenTofu
+"$IAC_CLI" -chdir=deploy/terraform init
+"$IAC_CLI" -chdir=deploy/terraform plan -out=tfplan
+"$IAC_CLI" -chdir=deploy/terraform apply tfplan
+```
+
+Read the non-secret outputs with `"$IAC_CLI" -chdir=deploy/terraform output`
+and retrieve the client secret securely. Keep the CLI state for this deployment
+separate from any Resource Manager stack state.
+
+### Use the infrastructure outputs
+
+Record these outputs securely after the apply completes:
+
+- `identity_domain_endpoint`
+- `confidential_application_client_id`
+- `confidential_application_client_secret`
+- OKE cluster OCID/name from the OCI Console
+
+Set the non-secret chart inputs in your shell before deploying the Portal:
+
+```bash
+export PORTAL_IDM_ENDPOINT="<identity_domain_endpoint output>"
+export PORTAL_CLIENT_ID="<confidential_application_client_id output>"
+```
+
+For a CLI deployment, you can instead populate them directly from state:
+
+```bash
+export PORTAL_IDM_ENDPOINT="$("$IAC_CLI" -chdir=deploy/terraform output -raw identity_domain_endpoint)"
+export PORTAL_CLIENT_ID="$("$IAC_CLI" -chdir=deploy/terraform output -raw confidential_application_client_id)"
+```
 
 If the initial Portal URL is temporary, update the Identity Domain redirect URI
 and post-logout URI after the final load balancer or ingress URL is known. The
@@ -210,8 +261,12 @@ callback URL is `${PORTAL_URL}/callback`.
 
 ### Configure Kubernetes access
 
-Use the OKE cluster page in OCI Console to obtain the cluster's kubeconfig
-access command, then verify connectivity:
+Use the [OKE cluster page in OCI Console](https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengaccessingclusterkubectl.htm) to obtain the cluster's
+kubeconfig access command. If `enable_external_kubectl_access = true`, select
+the public endpoint when generating kubeconfig and connect from an address in
+`external_kubectl_access_cidr`. Otherwise, use a route into the VCN, such as
+[OCI Bastion](https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengsettingupbastion.htm).
+Then verify connectivity:
 
 ```bash
 kubectl config current-context

@@ -9,7 +9,7 @@ resource "oci_containerengine_cluster" "cluster" {
   }
 
   endpoint_config {
-    is_public_ip_enabled = false
+    is_public_ip_enabled = var.enable_external_kubectl_access
     subnet_id            = local.endpoint_subnet_id
 
     nsg_ids = [oci_core_network_security_group.nsg_endpoint.id]
@@ -25,6 +25,16 @@ resource "oci_containerengine_cluster" "cluster" {
   }
 
   lifecycle {
+    precondition {
+      condition     = !var.enable_external_kubectl_access || var.create_endpoint_subnet
+      error_message = "enable_external_kubectl_access requires create_endpoint_subnet=true so worker nodes remain on a private subnet."
+    }
+
+    precondition {
+      condition     = !var.enable_external_kubectl_access || try(trimspace(var.external_kubectl_access_cidr), "") != ""
+      error_message = "external_kubectl_access_cidr is required when enable_external_kubectl_access=true."
+    }
+
     precondition {
       condition     = local.effective_k8s_version != null
       error_message = "No supported OKE Kubernetes versions were returned for this compartment/region. Set k8s_version explicitly or check OKE availability."
@@ -91,4 +101,3 @@ resource "oci_containerengine_node_pool" "np1" {
     }
   }
 }
-

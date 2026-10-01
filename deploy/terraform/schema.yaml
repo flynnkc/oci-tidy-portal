@@ -123,7 +123,7 @@ variables:
   external_kubectl_access_cidr:
     type: string
     title: "External kubectl Access CIDR"
-    description: "CIDR block allowed to access the OKE API endpoint when external access is enabled."
+    description: "Required for external access. Use your operator public IP as a /32 CIDR when possible; 0.0.0.0/0 allows any source."
     required: false
     visible: ${enable_external_kubectl_access}
     pattern: "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$"
@@ -298,4 +298,3 @@ variables:
     title: "Force Delete Confidential Application"
     default: true
     description: "Hidden compatibility input. Terraform always enables force delete during stack destroy."
-

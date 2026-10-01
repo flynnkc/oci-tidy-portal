@@ -10,6 +10,8 @@ confidential_application_base_url = "https://portal.example.com"
 
 # Keep the OKE API private unless a trusted management CIDR is required.
 enable_external_kubectl_access = false
+# Required when enable_external_kubectl_access is true; prefer your public IP/32.
+# external_kubectl_access_cidr = "203.0.113.10/32"
 lb_ingress_source_cidr         = "203.0.113.0/24"
 enable_lb_http_ingress         = false
 
