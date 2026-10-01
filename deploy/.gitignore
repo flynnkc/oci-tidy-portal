@@ -7,6 +7,3 @@ terraform/*.tfvars
 
 # Keep installation-specific Helm values out of version control.
 helm/*/values.local.yaml
-
-.vscode/
-tmp/
