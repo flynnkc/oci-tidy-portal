@@ -229,10 +229,14 @@ kubectl get nodes -o jsonpath='{range .items[*]}{.status.nodeInfo.architecture}{
 Build `linux/arm64` for arm64 nodes, `linux/amd64` for amd64 nodes, or a
 multi-architecture image for mixed pools.
 
-### Create OCIR repositories and authenticate
+### Create OCIR repositories
 
-Create the three OCIR repositories if they do not already exist. The repository
-names may contain a path; create the same path used in the image reference.
+Create the three OCIR repositories if they do not already exist. With the
+configuration defaults above, create these exact repository names:
+`oci-management-portal`, `tag-updater`, and `ociextirpater`. If you override a
+`*_REPOSITORY` value (for example, to use `platform/tag-updater`), create that
+exact path instead; it must match the image reference used by the build helper
+and Helm.
 
 ```bash
 oci artifacts container repository create \
@@ -248,22 +252,7 @@ oci artifacts container repository create \
   --display-name "${EXTIRPATER_REPOSITORY}"
 ```
 
-If a repository already exists, continue. Generate an OCI auth token, then use
-the helper's `--login` option to authenticate without placing the token in a
-command argument:
-
-```bash
-export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
-scripts/build-and-push-image.sh --login \
-  --region "${OCI_REGION}" \
-  --namespace "${OCIR_NAMESPACE}" \
-  --platform linux/arm64
-```
-
-The command above logs in, then builds and pushes all three images. If you do
-not want the helper to prompt, provide `OCIR_AUTH_TOKEN` only for the current
-shell session. Consult the [OCIR username guidance](https://docs.oracle.com/en-us/iaas/Content/Registry/Tasks/registrypushingimagesusingthedockercli.htm)
-for the exact default-domain or identity-domain username format.
+If a repository already exists, continue.
 
 ## Build and publish images
 
@@ -274,14 +263,20 @@ manifests. Pass `--engine podman` to select Podman; otherwise `auto` selects
 Docker when available. Each image defaults to its submodule's short Git SHA;
 use `--tag` to apply one tag to every image, or `--*-tag` to override one image.
 
-After logging in, build and publish all images again when needed:
+Generate an OCI auth token, then authenticate and build/push all three images
+in one command. `--login` prompts for the token unless `OCIR_AUTH_TOKEN` is set
+only for the current shell session:
 
 ```bash
-scripts/build-and-push-image.sh \
+export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
+scripts/build-and-push-image.sh --login \
   --region "${OCI_REGION}" \
-  --namespace "${OCIR_NAMESPACE}" \
   --platform linux/arm64
 ```
+
+The helper obtains the OCIR tenancy namespace with `oci os ns get` when
+`--namespace` and `OCIR_NAMESPACE` are not supplied. Consult the [OCIR username guidance](https://docs.oracle.com/en-us/iaas/Content/Registry/Tasks/registrypushingimagesusingthedockercli.htm)
+for the exact default-domain or identity-domain username format.
 
 For mixed node architectures, replace the platform value with
 `linux/amd64,linux/arm64`. See [scripts/README.md](scripts/README.md) for all
@@ -324,9 +319,25 @@ unset PORTAL_CLIENT_SECRET
 The Portal uses the signed-in user's context for Portal actions. Cost and usage
 operations use its configured runtime identity. For the documented
 `instance_principal` configuration, create a dynamic group containing the OKE
-worker nodes (or their compartment) and grant only the OCI permissions required
-by the features you enable. Start with the Portal component guide's runtime IAM
-section, then scope policies to the cleanup compartment rather than tenancy
+worker nodes (or their compartment). For example:
+
+```text
+ALL {instance.compartment.id = '<worker-node-compartment-ocid>'}
+```
+
+Grant the dynamic group only the permissions needed by enabled Portal features.
+These examples support cost and compartment discovery; add narrowly scoped
+resource-family permissions only for approved runtime operations:
+
+```text
+Allow dynamic-group <portal-node-dynamic-group> to read usage-reports in tenancy
+Allow dynamic-group <portal-node-dynamic-group> to inspect compartments in tenancy
+```
+
+Instance-principal permissions apply to every workload placed on a matching
+node. Use a dedicated node pool or compartment if this identity must not be
+shared with other workloads. Start with the Portal component guide's runtime
+IAM section, then scope policies to the cleanup compartment rather than tenancy
 where possible.
 
 ### Install the Helm release
@@ -353,10 +364,14 @@ helm upgrade --install oci-management-portal \
 
 ## Deploy Tag Updater
 
-Skip this section if periodic tag-default updates are not approved. The
-recommended OKE path is an enhanced OKE cluster using workload identity.
+Skip this section if periodic tag-default updates are not approved. Choose one
+runtime identity model: workload identity for an enhanced OKE cluster, or the
+worker-node instance principal for a standard/basic cluster. Do not grant both
+models to the same deployment.
 
-### Create the workload-identity policy
+### Create the runtime IAM policy
+
+#### Workload identity (enhanced OKE clusters)
 
 Obtain the cluster OCID and choose the Kubernetes namespace/service-account
 names. The chart's default service-account name is the release name,
@@ -380,6 +395,28 @@ Allow any-user to use tag-namespaces in tenancy where all {
 
 Narrow policy scope where OCI policy syntax supports it. Review the policy
 before applying: Tag Updater can change tag defaults in every permitted scope.
+
+#### Instance principal (basic OKE clusters)
+
+Create a dynamic group for the node instances that run Tag Updater. A
+compartment-based membership rule is convenient for a dedicated node pool:
+
+```text
+ALL {instance.compartment.id = '<tag-updater-node-compartment-ocid>'}
+```
+
+Grant that dynamic group the same tag permissions as the workload identity:
+
+```text
+Allow dynamic-group <tag-updater-node-dynamic-group> to manage tag-defaults in tenancy
+Allow dynamic-group <tag-updater-node-dynamic-group> to use tag-namespaces in tenancy
+```
+
+This identity is shared by every pod on the matching nodes. Use dedicated nodes
+or accept that shared scope deliberately. In the Helm command below, replace
+`--set config.ociSigner="WORKLOAD_IDENTITY"` with
+`--set config.ociSigner="INSTANCE_PRINCIPAL"`; no workload-identity policy is
+needed for this option.
 
 ### Create the namespace and pull secret
 
