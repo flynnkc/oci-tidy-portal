@@ -16,14 +16,13 @@ Podman, then pushes all three images to Oracle Cloud Infrastructure Registry
 `--namespace` is provided. The target OCIR repositories must already exist and
 the selected engine must already be authenticated, unless `--login` is used.
 The default `auto` engine selects Docker when available, otherwise Podman.
-The helper selects the documented short OCIR endpoint automatically for every
-public OC1 region, including `iad.ocir.io` for `us-ashburn-1` and
-`ord.ocir.io` for `us-chicago-1`. For a region outside that table, provide its
-OCIR endpoint with `--registry` (or `REGISTRY`).
+Provide the OCIR host with `--registry` (or `REGISTRY`). Use the same host for
+image builds, Kubernetes pull secrets, and Helm image references. For example,
+`iad.ocir.io` is the OCIR host for `us-ashburn-1`.
 
 ```bash
 scripts/build-and-push-image.sh \
-  --region us-ashburn-1 \
+  --registry iad.ocir.io \
   --platform linux/arm64
 ```
 
@@ -42,7 +41,7 @@ For a multi-architecture image, supply a comma-separated platform list:
 ```bash
 scripts/build-and-push-image.sh \
   --tag-updater-repository platform/tag-updater \
-  --region us-ashburn-1 \
+  --registry iad.ocir.io \
   --platform linux/amd64,linux/arm64 \
   --also-tag-latest
 ```

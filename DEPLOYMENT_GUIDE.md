@@ -147,6 +147,7 @@ export TAG_KEY="Owner"
 export EXPIRY_NAMESPACE="Usage-Management"
 export EXPIRY_KEY="Expires"
 export OCIR_NAMESPACE="$(oci os ns get --query data --raw-output)"
+export REGISTRY="iad.ocir.io" # OCIR host for OCI_REGION; replace for other regions
 export PORTAL_REPOSITORY="oci-management-portal"
 export TAG_UPDATER_REPOSITORY="tag-updater"
 export EXTIRPATER_REPOSITORY="ociextirpater"
@@ -325,13 +326,15 @@ only for the current shell session:
 ```bash
 export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
 scripts/build-and-push-image.sh --login \
-  --region "${OCI_REGION}" \
+  --registry "${REGISTRY}" \
   --platform linux/arm64
 ```
 
 The helper obtains the OCIR tenancy namespace with `oci os ns get` when
 `--namespace` and `OCIR_NAMESPACE` are not supplied. Consult the [OCIR username guidance](https://docs.oracle.com/en-us/iaas/Content/Registry/Tasks/registrypushingimagesusingthedockercli.htm)
 for the exact default-domain or identity-domain username format.
+The same `REGISTRY` value is used for image builds, pull secrets, and Helm image
+references.
 
 For mixed node architectures, replace the platform value with
 `linux/amd64,linux/arm64`. See [scripts/README.md](scripts/README.md) for all
@@ -345,14 +348,19 @@ options.
 export PORTAL_NAMESPACE="oci-management-portal"
 kubectl create namespace "${PORTAL_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-read -r -s -p 'OCIR auth token: ' OCIR_AUTH_TOKEN
+printf 'OCIR auth token: '
+IFS= read -r -s OCIR_AUTH_TOKEN
 printf '\n'
-kubectl create secret docker-registry ocirsecret \
-  --namespace "${PORTAL_NAMESPACE}" \
-  --docker-server="${REGISTRY}" \
-  --docker-username="${OCIR_USERNAME}" \
-  --docker-password="${OCIR_AUTH_TOKEN}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+if [[ -z "${REGISTRY:-}" || -z "${OCIR_USERNAME:-}" || -z "${OCIR_AUTH_TOKEN:-}" ]]; then
+  printf 'Set REGISTRY, OCIR_USERNAME, and a non-empty OCIR_AUTH_TOKEN before creating the pull secret.\n' >&2
+else
+  kubectl create secret docker-registry ocirsecret \
+    --namespace "${PORTAL_NAMESPACE}" \
+    --docker-server="${REGISTRY}" \
+    --docker-username="${OCIR_USERNAME}" \
+    --docker-password="${OCIR_AUTH_TOKEN}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
 unset OCIR_AUTH_TOKEN
 ```
 
@@ -360,7 +368,8 @@ Create a Kubernetes secret for the confidential application client secret. The
 value comes from the Terraform output and should not be committed.
 
 ```bash
-read -r -s -p 'Portal OIDC client secret: ' PORTAL_CLIENT_SECRET
+printf 'Portal OIDC client secret: '
+IFS= read -r -s PORTAL_CLIENT_SECRET
 printf '\n'
 kubectl create secret generic oci-management-portal-secrets \
   --namespace "${PORTAL_NAMESPACE}" \
@@ -479,14 +488,19 @@ needed for this option.
 export TAG_UPDATER_NAMESPACE="tag-updater"
 kubectl create namespace "${TAG_UPDATER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-read -r -s -p 'OCIR auth token: ' OCIR_AUTH_TOKEN
+printf 'OCIR auth token: '
+IFS= read -r -s OCIR_AUTH_TOKEN
 printf '\n'
-kubectl create secret docker-registry ocir-pull-secret \
-  --namespace "${TAG_UPDATER_NAMESPACE}" \
-  --docker-server="${REGISTRY}" \
-  --docker-username="${OCIR_USERNAME}" \
-  --docker-password="${OCIR_AUTH_TOKEN}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+if [[ -z "${REGISTRY:-}" || -z "${OCIR_USERNAME:-}" || -z "${OCIR_AUTH_TOKEN:-}" ]]; then
+  printf 'Set REGISTRY, OCIR_USERNAME, and a non-empty OCIR_AUTH_TOKEN before creating the pull secret.\n' >&2
+else
+  kubectl create secret docker-registry ocir-pull-secret \
+    --namespace "${TAG_UPDATER_NAMESPACE}" \
+    --docker-server="${REGISTRY}" \
+    --docker-username="${OCIR_USERNAME}" \
+    --docker-password="${OCIR_AUTH_TOKEN}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
 unset OCIR_AUTH_TOKEN
 ```
 
@@ -542,14 +556,19 @@ is suspended by default.
    export EXTIRPATER_NAMESPACE="ociextirpater"
    kubectl create namespace "${EXTIRPATER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-   read -r -s -p 'OCIR auth token: ' OCIR_AUTH_TOKEN
+   printf 'OCIR auth token: '
+   IFS= read -r -s OCIR_AUTH_TOKEN
    printf '\n'
-   kubectl create secret docker-registry ocir-pull-secret \
-     --namespace "${EXTIRPATER_NAMESPACE}" \
-     --docker-server="${REGISTRY}" \
-     --docker-username="${OCIR_USERNAME}" \
-     --docker-password="${OCIR_AUTH_TOKEN}" \
-     --dry-run=client -o yaml | kubectl apply -f -
+   if [[ -z "${REGISTRY:-}" || -z "${OCIR_USERNAME:-}" || -z "${OCIR_AUTH_TOKEN:-}" ]]; then
+     printf 'Set REGISTRY, OCIR_USERNAME, and a non-empty OCIR_AUTH_TOKEN before creating the pull secret.\n' >&2
+   else
+     kubectl create secret docker-registry ocir-pull-secret \
+       --namespace "${EXTIRPATER_NAMESPACE}" \
+       --docker-server="${REGISTRY}" \
+       --docker-username="${OCIR_USERNAME}" \
+       --docker-password="${OCIR_AUTH_TOKEN}" \
+       --dry-run=client -o yaml | kubectl apply -f -
+   fi
    unset OCIR_AUTH_TOKEN
    ```
 

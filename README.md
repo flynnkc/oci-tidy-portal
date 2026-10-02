@@ -18,7 +18,7 @@ build and Helm deployment commands pinned to the same image.
 
 | Variable | Description | Projects | Required | Default value | Example value |
 | --- | --- | --- | --- | --- | --- |
-| `OCI_REGION` | Region containing the OCIR registry and OKE deployment. | Portal, Tag Updater, Extirpater | Yes | None | `us-ashburn-1` |
+| `OCI_REGION` | OCI region for infrastructure and application configuration. | Portal, Tag Updater, Extirpater | Yes, for deployment; no, for an image build | None | `us-ashburn-1` |
 | `OCI_HOME_REGION` | Tenancy home region used by Tag Updater for Identity calls. | Tag Updater | Yes, for Tag Updater | None | `us-ashburn-1` |
 | `TENANCY_OCID` | OCID of the OCI tenancy. | Tag Updater, Extirpater | Yes, for Tag Updater or Extirpater | None | `ocid1.tenancy.oc1..example` |
 | `DEPLOYMENT_COMPARTMENT_OCID` | Compartment where Terraform creates the deployment infrastructure. | Shared infrastructure | Yes | None | `ocid1.compartment.oc1..example` |
@@ -30,6 +30,7 @@ build and Helm deployment commands pinned to the same image.
 | `EXPIRY_NAMESPACE` | OCI tag namespace containing the resource-expiry tag. | Portal | Yes, for Portal expiry-tag settings | None | `Usage-Management` |
 | `EXPIRY_KEY` | OCI tag key that stores resource-expiry information. | Portal, Tag Updater | Yes, for Portal expiry-tag settings or Tag Updater | None | `Expires` |
 | `OCIR_NAMESPACE` | Object Storage namespace used in OCIR image paths. | Portal, Tag Updater, Extirpater | Yes, to push or deploy images | `oci os ns get` output when the build helper runs | `mytenancynamespace` |
+| `REGISTRY` | OCIR registry host for `OCI_REGION`; used by image references and pull secrets. | Portal, Tag Updater, Extirpater | Yes, to deploy images | None | `iad.ocir.io` for `us-ashburn-1` |
 | `PORTAL_REPOSITORY` | OCIR repository name for the Portal image. | Portal | No | `oci-management-portal` | `oci-management-portal` |
 | `TAG_UPDATER_REPOSITORY` | OCIR repository name for the Tag Updater image. | Tag Updater | No | `tag-updater` | `tag-updater` |
 | `EXTIRPATER_REPOSITORY` | OCIR repository name for the Extirpater image. | Extirpater | No | `ociextirpater` | `ociextirpater` |
