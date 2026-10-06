@@ -73,3 +73,9 @@ Create the name of the secret to use.
 {{- default (include "oci-management-portal.fullname" .) .Values.secret.existingSecret }}
 {{- end }}
 
+{{/*
+Create the name of the optional Redis service and deployment.
+*/}}
+{{- define "oci-management-portal.redisName" -}}
+{{- printf "%s-redis" (include "oci-management-portal.fullname" . | trunc 57 | trimSuffix "-") }}
+{{- end }}

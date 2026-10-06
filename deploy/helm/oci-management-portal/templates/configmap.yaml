@@ -15,10 +15,11 @@ data:
   OCI_MGMT_DASH_AUTH_TYPE: {{ .Values.config.authType | quote }}
   OCI_MGMT_DASH_IDM_ENDPOINT: {{ required "config.idmEndpoint is required" .Values.config.idmEndpoint | quote }}
   OCI_MGMT_DASH_CLIENT_ID: {{ required "config.clientId is required" .Values.config.clientId | quote }}
-  OCI_MGMT_DASH_SESSION_BACKEND: {{ .Values.config.sessionBackend | quote }}
+  OCI_MGMT_DASH_SESSION_BACKEND: {{ ternary "redis" .Values.config.sessionBackend .Values.redis.enabled | quote }}
   OCI_MGMT_DASH_SESSION_KEY_PREFIX: {{ .Values.config.sessionKeyPrefix | quote }}
   OCI_MGMT_DASH_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
-  OCI_MGMT_DASH_LOG_FORMAT: {{ .Values.config.logFormat | quote }}
+  {{- /* Translate the former chart default used by existing values.local.yaml files. */}}
+  OCI_MGMT_DASH_LOG_FORMAT: {{ ternary "%(asctime)s - %(name)s - %(levelname)s - %(message)s" .Values.config.logFormat (eq .Values.config.logFormat "text") | quote }}
   {{- with .Values.config.filterNamespace }}
   OCI_MGMT_DASH_FILTER_NAMESPACE: {{ . | quote }}
   {{- end }}
@@ -28,7 +29,9 @@ data:
   {{- with .Values.config.profile }}
   OCI_MGMT_DASH_PROFILE: {{ . | quote }}
   {{- end }}
-  {{- if or (eq (lower .Values.config.sessionBackend) "redis") (eq (lower .Values.config.sessionBackend) "valkey") }}
+  {{- if .Values.redis.enabled }}
+  OCI_MGMT_DASH_SESSION_REDIS_URL: {{ printf "redis://%s:%v/0" (include "oci-management-portal.redisName" .) .Values.redis.port | quote }}
+  {{- else if or (eq (lower .Values.config.sessionBackend) "redis") (eq (lower .Values.config.sessionBackend) "valkey") }}
   OCI_MGMT_DASH_SESSION_REDIS_URL: {{ required "config.sessionRedisUrl is required when config.sessionBackend is redis or valkey" .Values.config.sessionRedisUrl | quote }}
   {{- else }}
   {{- with .Values.config.sessionRedisUrl }}
@@ -39,4 +42,3 @@ data:
   OCI_MGMT_DASH_SESSION_REDIS_USERNAME: {{ . | quote }}
   {{- end }}
 {{- end }}
-

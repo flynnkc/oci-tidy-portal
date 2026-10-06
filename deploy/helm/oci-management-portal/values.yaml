@@ -5,7 +5,8 @@ image:
   pullPolicy: IfNotPresent
   tag: ""
 
-imagePullSecrets: []
+imagePullSecrets:
+  - name: ocirsecret
 nameOverride: ""
 fullnameOverride: ""
 
@@ -34,14 +35,25 @@ config:
   sessionRedisUrl: ""
   sessionRedisUsername: ""
   logLevel: INFO
-  logFormat: text
+  logFormat: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 secret:
-  create: true
-  existingSecret: ""
+  create: false
+  existingSecret: "oci-management-portal-secrets"
   clientSecret: ""
   sessionRedisPassword: ""
   extraEnv: {}
+
+redis:
+  enabled: false
+  image:
+    repository: docker.io/library/redis
+    tag: 7.0-alpine
+    pullPolicy: IfNotPresent
+  port: 6379
+  auth:
+    enabled: false
+  resources: {}
 
 service:
   type: LoadBalancer

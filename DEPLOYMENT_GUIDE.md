@@ -148,6 +148,7 @@ export EXPIRY_NAMESPACE="Usage-Management"
 export EXPIRY_KEY="Expires"
 export OCIR_NAMESPACE="$(oci os ns get --query data --raw-output)"
 export REGISTRY="iad.ocir.io" # OCIR host for OCI_REGION; replace for other regions
+export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
 export PORTAL_REPOSITORY="oci-management-portal"
 export TAG_UPDATER_REPOSITORY="tag-updater"
 export EXTIRPATER_REPOSITORY="ociextirpater"
@@ -324,7 +325,6 @@ in one command. `--login` prompts for the token unless `OCIR_AUTH_TOKEN` is set
 only for the current shell session:
 
 ```bash
-export OCIR_USERNAME="<namespace>/<identity-domain>/<username>"
 scripts/build-and-push-image.sh --login \
   --registry "${REGISTRY}" \
   --platform linux/arm64
@@ -407,11 +407,29 @@ where possible.
 ### Install the Helm release
 
 Create `deploy/helm/oci-management-portal/values.local.yaml` from the chart's
-safe `values.yaml` defaults. Set the image, public URL, tag settings, Identity
-Domain endpoint/client ID, cleanup compartment, and session backend. Set
-`secret.create=false` and `secret.existingSecret=oci-management-portal-secrets`
-because the client secret was created separately. For more than one Portal
-replica, use Redis or Valkey rather than filesystem sessions.
+safe `values.yaml` defaults. Set deployment-specific options such as the session
+backend there. The Helm command below supplies the image, public URL, tag
+settings, cleanup compartment, and Identity Domain values collected earlier.
+Helm does not read these shell variables automatically; the `--set-string`
+arguments pass them into the chart.
+The chart defaults to the `ocirsecret` image-pull secret and the existing
+`oci-management-portal-secrets` client secret created above. For more than one
+Portal replica, use Redis or Valkey rather than filesystem sessions.
+
+To deploy Redis with the Portal chart, set `redis.enabled: true` in
+`values.local.yaml`. The chart uses `docker.io/library/redis:7.0-alpine`,
+creates a Redis Deployment and an internal Service, and configures the Portal
+session backend and URL automatically. The Redis pod uses temporary storage;
+restarting it ends active sessions. For password protection, add an
+`OCI_MGMT_DASH_SESSION_REDIS_PASSWORD` key to the existing
+`oci-management-portal-secrets` Kubernetes Secret and set
+`redis.auth.enabled: true`. Keep the password out of `values.local.yaml`.
+
+If Redis is managed separately, leave `redis.enabled: false` and set
+`config.sessionBackend: redis` plus `config.sessionRedisUrl` to that Service's
+Redis URL. Keep credentials in the Kubernetes Secret rather than the URL.
+For a custom `config.logFormat`, use a Python logging format string such as
+`%(asctime)s - %(name)s - %(levelname)s - %(message)s`.
 
 ```bash
 helm upgrade --install oci-management-portal \
@@ -421,6 +439,10 @@ helm upgrade --install oci-management-portal \
   --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${PORTAL_REPOSITORY}" \
   --set-string image.tag="${PORTAL_TAG}" \
   --set-string config.appUri="${PORTAL_URL}" \
+  --set-string config.tagNamespace="${TAG_NAMESPACE}" \
+  --set-string config.tagKey="${TAG_KEY}" \
+  --set-string config.filterNamespace="${EXPIRY_NAMESPACE}" \
+  --set-string config.filterKey="${EXPIRY_KEY}" \
   --set-string config.cleanupCompartment="${CLEANUP_COMPARTMENT_OCID}" \
   --set-string config.idmEndpoint="${PORTAL_IDM_ENDPOINT}" \
   --set-string config.clientId="${PORTAL_CLIENT_ID}"
@@ -517,8 +539,8 @@ helm upgrade --install tag-updater \
   --namespace "${TAG_UPDATER_NAMESPACE}" \
   --set image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${TAG_UPDATER_REPOSITORY}" \
   --set image.tag="${TAG_UPDATER_TAG}" \
-  --set config.tagNamespace="${TAG_NAMESPACE}" \
-  --set config.tagKey="${EXPIRY_KEY}" \
+  --set-string config.tagNamespace="${EXPIRY_NAMESPACE}" \
+  --set-string config.tagKey="${EXPIRY_KEY}" \
   --set config.ociSigner="WORKLOAD_IDENTITY" \
   --set config.ociIdentityRegion="${OCI_HOME_REGION}" \
   --set config.ociResourcePrincipalRegion="${OCI_REGION}" \
@@ -585,7 +607,8 @@ is suspended by default.
      --namespace "${EXTIRPATER_NAMESPACE}" \
      --values deploy/helm/ociextirpater/values.local.yaml \
      --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
-     --set-string image.tag="${EXTIRPATER_TAG}"
+     --set-string image.tag="${EXTIRPATER_TAG}" \
+     --set-string config.tenancy="${TENANCY_OCID}"
    ```
 
 5. Confirm the CronJob is suspended and inspect its rendered configuration:
