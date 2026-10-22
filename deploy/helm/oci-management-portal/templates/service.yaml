@@ -1,12 +1,27 @@
+{{- $certificateOcid := .Values.service.tlsCertificateOcid | default "" -}}
+{{- $annotations := .Values.service.annotations | default dict -}}
+{{- $tlsSecret := index $annotations "service.beta.kubernetes.io/oci-load-balancer-tls-secret" | default "" -}}
+{{- $manualCertificateMap := index $annotations "oci-load-balancer.oraclecloud.com/tls-certificate-map" | default "" -}}
+{{- if and $certificateOcid (or $tlsSecret $manualCertificateMap) -}}
+{{- fail "service.tlsCertificateOcid cannot be combined with TLS Secret or manual certificate map annotations" -}}
+{{- end -}}
+{{- if and (eq .Values.service.type "LoadBalancer") (eq (int .Values.service.port) 443) (not (or $certificateOcid $tlsSecret $manualCertificateMap)) -}}
+{{- fail "service.tlsCertificateOcid is required for the default HTTPS load balancer; set it to an OCI Certificates leaf certificate OCID, or configure a TLS Secret annotation" -}}
+{{- end -}}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "oci-management-portal.fullname" . }}
   labels:
     {{- include "oci-management-portal.labels" . | nindent 4 }}
-  {{- with .Values.service.annotations }}
+  {{- if or $annotations $certificateOcid }}
   annotations:
+    {{- with $annotations }}
     {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if $certificateOcid }}
+    oci-load-balancer.oraclecloud.com/tls-certificate-map: {{ include "oci-management-portal.tlsCertificateMapName" . | quote }}
+    {{- end }}
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
@@ -14,7 +29,6 @@ spec:
     - port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
-      name: http
+      name: https
   selector:
     {{- include "oci-management-portal.selectorLabels" . | nindent 4 }}
-

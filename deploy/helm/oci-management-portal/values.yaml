@@ -57,8 +57,13 @@ redis:
 
 service:
   type: LoadBalancer
-  port: 80
-  annotations: {}
+  port: 443
+  # OCI Certificates leaf certificate OCID; Helm creates the listener mapping.
+  tlsCertificateOcid: ""
+  annotations:
+    service.beta.kubernetes.io/oci-load-balancer-ssl-ports: "443"
+    # The Portal sets the omid session cookie (see src/wsgi.py).
+    oci-load-balancer.oraclecloud.com/session-persistence-config: '{"cookieName":"omid"}'
 
 # Reserved for profile or workload-principal deployments. The current portal
 # templates do not mount these fields; keep OCI credentials outside the chart.

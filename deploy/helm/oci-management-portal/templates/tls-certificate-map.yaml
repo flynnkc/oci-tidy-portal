@@ -1,0 +1,10 @@
+{{- if .Values.service.tlsCertificateOcid }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oci-management-portal.tlsCertificateMapName" . }}
+  labels:
+    {{- include "oci-management-portal.labels" . | nindent 4 }}
+data:
+  {{ .Values.service.port | quote }}: {{ list .Values.service.tlsCertificateOcid | toJson | quote }}
+{{- end }}

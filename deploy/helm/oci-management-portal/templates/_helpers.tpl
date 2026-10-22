@@ -79,3 +79,10 @@ Create the name of the optional Redis service and deployment.
 {{- define "oci-management-portal.redisName" -}}
 {{- printf "%s-redis" (include "oci-management-portal.fullname" . | trunc 57 | trimSuffix "-") }}
 {{- end }}
+
+{{/*
+Create the name of the OCI Certificates listener mapping ConfigMap.
+*/}}
+{{- define "oci-management-portal.tlsCertificateMapName" -}}
+{{- printf "%s-tls-certificate-map" (include "oci-management-portal.fullname" . | trunc 43 | trimSuffix "-") }}
+{{- end }}

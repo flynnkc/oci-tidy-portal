@@ -142,6 +142,7 @@ export DEPLOYMENT_COMPARTMENT_OCID="ocid1.compartment.oc1..<unique-id>"
 export CLEANUP_COMPARTMENT_OCID="ocid1.compartment.oc1..<unique-id>"
 export IDENTITY_DOMAIN_OCID="ocid1.domain.oc1..<unique-id>"
 export PORTAL_URL="https://portal.example.com"
+export PORTAL_CERTIFICATE_OCID="ocid1.certificate.oc1..<unique-id>"
 export TAG_NAMESPACE="Usage-Management"
 export TAG_KEY="Owner"
 export EXPIRY_NAMESPACE="Usage-Management"
@@ -378,6 +379,74 @@ kubectl create secret generic oci-management-portal-secrets \
 unset PORTAL_CLIENT_SECRET
 ```
 
+### Configure the Portal HTTPS certificate
+
+The Portal chart exposes the OCI load balancer on HTTPS port 443 and uses
+[OCI Certificates](https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengcreatingloadbalancers-subtopic.htm)
+by default. In the OCI Console, open **Identity & Security > Certificates**.
+Select an active certificate for the hostname in `PORTAL_URL`, or
+[create](https://docs.oracle.com/en-us/iaas/Content/certificates/creating-certificate.htm)
+or [import](https://docs.oracle.com/en-us/iaas/Content/certificates/importing-certificate.htm)
+one. Record its **leaf certificate OCID** as `PORTAL_CERTIFICATE_OCID`. The
+certificate must be in the same region as the load balancer.
+
+Grant the OKE cluster resource principal access to the certificate's
+compartment. Create this IAM policy in OCI if an equivalent policy is not
+already in place; replace both OCID placeholders with the actual values:
+
+```text
+Allow any-user to manage certificate-authority-family in compartment id <certificate-compartment-ocid> where all {request.principal.type = 'cluster', request.principal.id = '<oke-cluster-ocid>'}
+```
+
+Helm creates the listener certificate mapping ConfigMap in the Portal namespace
+from `PORTAL_CERTIFICATE_OCID` and connects it to the Service. The chart also
+enables OCI application cookie session persistence using the Portal's `omid`
+cookie. Use Redis for shared Portal session storage when running multiple
+Portal replicas.
+
+#### Kubernetes TLS Secret alternative
+
+If you manage certificates in Kubernetes, set `PORTAL_CERTIFICATE_OCID` to an
+empty string and add
+`service.beta.kubernetes.io/oci-load-balancer-tls-secret: portal-tls` under
+`service.annotations` in `values.local.yaml`. Create that Secret in the Portal
+namespace using the certificate and private key for `PORTAL_URL`:
+
+```bash
+kubectl create secret tls portal-tls \
+  --namespace "${PORTAL_NAMESPACE}" \
+  --cert=/path/to/fullchain.pem \
+  --key=/path/to/privkey.pem \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**Testing only — self-signed certificate (do not use in production).** If you
+do not yet have a certificate for a test deployment, generate one for the
+hostname in `PORTAL_URL` and upload it as the `portal-tls` Kubernetes Secret:
+
+```bash
+PORTAL_HOST="${PORTAL_URL#https://}"
+PORTAL_HOST="${PORTAL_HOST%%/*}"
+PORTAL_HOST="${PORTAL_HOST%%:*}"
+openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 7 \
+  -keyout portal-test.key \
+  -out portal-test.crt \
+  -subj "/CN=${PORTAL_HOST}" \
+  -addext "subjectAltName=DNS:${PORTAL_HOST}"
+kubectl create secret tls portal-tls \
+  --namespace "${PORTAL_NAMESPACE}" \
+  --cert=portal-test.crt \
+  --key=portal-test.key \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Browsers will warn that this certificate is untrusted. Replace it with a
+certificate issued by a trusted CA before production use.
+
+If you use another Secret name, set the annotation to that name. OCI cannot
+provision the load balancer if a TLS Secret and an OCI certificate mapping are
+configured together.
+
 ### Configure runtime IAM
 
 The Portal uses the signed-in user's context for Portal actions. Cost and usage
@@ -407,9 +476,11 @@ where possible.
 ### Install the Helm release
 
 Create `deploy/helm/oci-management-portal/values.local.yaml` from the chart's
-safe `values.yaml` defaults. Set deployment-specific options such as the session
-backend there. The Helm command below supplies the image, public URL, tag
-settings, cleanup compartment, and Identity Domain values collected earlier.
+`values.yaml` defaults. Set deployment-specific options such as the session
+backend there. The chart's HTTPS listener and OCI session persistence settings
+are already enabled. The Helm command below supplies the certificate OCID,
+image, public URL, tag settings, cleanup compartment, and Identity Domain
+values collected earlier.
 Helm does not read these shell variables automatically; the `--set-string`
 arguments pass them into the chart.
 The chart defaults to the `ocirsecret` image-pull secret and the existing
@@ -438,6 +509,7 @@ helm upgrade --install oci-management-portal \
   -f deploy/helm/oci-management-portal/values.local.yaml \
   --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${PORTAL_REPOSITORY}" \
   --set-string image.tag="${PORTAL_TAG}" \
+  --set-string service.tlsCertificateOcid="${PORTAL_CERTIFICATE_OCID}" \
   --set-string config.appUri="${PORTAL_URL}" \
   --set-string config.tagNamespace="${TAG_NAMESPACE}" \
   --set-string config.tagKey="${TAG_KEY}" \

@@ -25,6 +25,7 @@ build and Helm deployment commands pinned to the same image.
 | `CLEANUP_COMPARTMENT_OCID` | Compartment configured for Portal cleanup actions. | Portal | Yes, for the Portal chart | None | `ocid1.compartment.oc1..example` |
 | `IDENTITY_DOMAIN_OCID` | OCID of the Identity Domain that authenticates Portal users. | Portal | Yes | None | `ocid1.domain.oc1..example` |
 | `PORTAL_URL` | Public HTTPS URL for the Portal. | Portal | Yes | None | `https://portal.example.com` |
+| `PORTAL_CERTIFICATE_OCID` | OCI Certificates leaf certificate OCID for the Portal HTTPS listener; leave empty only when using a Kubernetes TLS Secret. | Portal | Yes, for the default HTTPS method | None | `ocid1.certificate.oc1..example` |
 | `TAG_NAMESPACE` | OCI namespace for the Portal's owner or creator tag. | Portal | Yes | None | `Usage-Management` |
 | `TAG_KEY` | OCI tag key configured for the Portal. | Portal | Yes, for Portal tag settings | None | `Owner` |
 | `EXPIRY_NAMESPACE` | OCI namespace for the expiry tag and Tag Updater's tag default. | Portal, Tag Updater | Yes | None | `Usage-Management` |
