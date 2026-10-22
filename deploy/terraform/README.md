@@ -2,6 +2,8 @@
 
 This directory contains Terraform configuration for deploying an OCI OKE cluster with:
 
+- Basic OKE cluster by default (`oke_cluster_type = "BASIC_CLUSTER"`); choose
+  `ENHANCED_CLUSTER` when using workload identity for Portal or CronJobs
 - OCI VCN IP Native pod networking
 - Subnets for the private API endpoint, worker nodes, additional private workloads, and the public load balancer
 - Node and API endpoint NSGs, plus subnet security lists

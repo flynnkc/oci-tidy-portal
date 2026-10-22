@@ -25,6 +25,7 @@ variableGroups:
   - title: "OKE Cluster Configuration"
     variables:
       - compartment_ocid
+      - oke_cluster_type
       - k8s_version
       - enable_external_kubectl_access
       - external_kubectl_access_cidr
@@ -99,6 +100,16 @@ variables:
     description: "Internal toggle for creating the dedicated private OKE API endpoint subnet."
 
   # OKE Configuration
+  oke_cluster_type:
+    type: enum
+    title: "OKE Cluster Type"
+    description: "Basic clusters use worker-node instance principals. Enhanced clusters support workload identity for Portal, Tag Updater, and Extirpater."
+    default: BASIC_CLUSTER
+    enum:
+      - BASIC_CLUSTER
+      - ENHANCED_CLUSTER
+    required: true
+
   k8s_version:
     type: oci:kubernetes:versions:id
     title: "Kubernetes Version"

@@ -39,3 +39,13 @@ output "identity_propagation_trust_name" {
   value       = oci_identity_domains_identity_propagation_trust.management_portal_jwt.name
 }
 
+output "oke_cluster_ocid" {
+  description = "OCID of the OKE cluster, used in workload-identity IAM policies"
+  value       = oci_containerengine_cluster.cluster.id
+}
+
+output "oke_cluster_type" {
+  description = "Selected OKE cluster type"
+  value       = oci_containerengine_cluster.cluster.type
+}
+

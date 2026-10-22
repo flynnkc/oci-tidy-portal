@@ -12,10 +12,10 @@ namespace:
   annotations: {}
 
 serviceAccount:
-  create: true
+  create: false
   annotations: {}
   name: ""
-  automountServiceAccountToken: true
+  automountServiceAccountToken: false
 
 podAnnotations: {}
 podLabels: {}
@@ -35,7 +35,7 @@ config:
   compartments: []
   days: 90
   logLevel: INFO
-  ociSigner: WORKLOAD_IDENTITY
+  ociSigner: INSTANCE_PRINCIPAL
   ociIdentityRegion: ""
   ociResourcePrincipalRegion: ""
   ociTenancyId: ""

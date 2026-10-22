@@ -31,6 +31,11 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      {{- if and (eq (lower .Values.config.authType) "workload_principal") (not (and .Values.serviceAccount.create .Values.serviceAccount.automountServiceAccountToken)) }}
+      {{- fail "workload_principal requires serviceAccount.create=true and serviceAccount.automountServiceAccountToken=true" }}
+      {{- end }}
+      serviceAccountName: {{ include "oci-management-portal.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

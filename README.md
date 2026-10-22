@@ -10,17 +10,17 @@ This repository is the umbrella workspace for the OCI management tools below. Ea
 
 ## Configuration-variable reference
 
-The Portal deployment requires the Portal and OCI environment values below.
-Tag Updater and Extirpater values are required only when deploying the
-corresponding optional component. Image tags default to the checked-out short
-Git SHA when the image-build helper is used; setting them explicitly keeps the
+The deployment includes the Portal, Tag Updater, and Extirpater. Supply the
+component-specific values below as each component is configured. Image tags
+default to the checked-out short Git SHA when the image-build helper is used;
+setting them explicitly keeps the
 build and Helm deployment commands pinned to the same image.
 
 | Variable | Description | Projects | Required | Default value | Example value |
 | --- | --- | --- | --- | --- | --- |
 | `OCI_REGION` | OCI region for infrastructure and application configuration. | Portal, Tag Updater, Extirpater | Yes, for deployment; no, for an image build | None | `us-ashburn-1` |
 | `OCI_HOME_REGION` | Tenancy home region used by Tag Updater for Identity calls. | Tag Updater | Yes, for Tag Updater | None | `us-ashburn-1` |
-| `TENANCY_OCID` | OCID of the OCI tenancy used by infrastructure and optional automation. | Shared infrastructure, Tag Updater, Extirpater | Yes | None | `ocid1.tenancy.oc1..example` |
+| `TENANCY_OCID` | OCID of the OCI tenancy used by infrastructure and automation. | Shared infrastructure, Tag Updater, Extirpater | Yes | None | `ocid1.tenancy.oc1..example` |
 | `DEPLOYMENT_COMPARTMENT_OCID` | Compartment where Terraform creates the deployment infrastructure. | Shared infrastructure | Yes | None | `ocid1.compartment.oc1..example` |
 | `CLEANUP_COMPARTMENT_OCID` | Compartment configured for Portal cleanup actions. | Portal | Yes, for the Portal chart | None | `ocid1.compartment.oc1..example` |
 | `IDENTITY_DOMAIN_OCID` | OCID of the Identity Domain that authenticates Portal users. | Portal | Yes | None | `ocid1.domain.oc1..example` |
@@ -99,5 +99,7 @@ push helper.
 ## Deployment
 
 Use the [umbrella deployment guide](DEPLOYMENT_GUIDE.md) for the ordered,
-end-to-end production deployment of the Portal and its optional Tag Updater and
-Extirpater components.
+end-to-end production deployment of the Portal, Tag Updater, and Extirpater.
+The infrastructure stack defaults to a basic OKE cluster
+and instance principals for all three components; select an enhanced cluster
+and the guide's workload-identity tracks when that identity model is required.

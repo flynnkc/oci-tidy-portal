@@ -192,6 +192,17 @@ variable "k8s_version" {
   }
 }
 
+variable "oke_cluster_type" {
+  description = "OKE cluster type: BASIC_CLUSTER uses node instance principals; ENHANCED_CLUSTER supports workload identity"
+  type        = string
+  default     = "BASIC_CLUSTER"
+
+  validation {
+    condition     = contains(["BASIC_CLUSTER", "ENHANCED_CLUSTER"], var.oke_cluster_type)
+    error_message = "oke_cluster_type must be BASIC_CLUSTER or ENHANCED_CLUSTER."
+  }
+}
+
 variable "enable_external_kubectl_access" {
   description = "Assign a public IP to the OKE API endpoint and allow external kubectl access"
   type        = bool

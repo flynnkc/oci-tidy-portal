@@ -65,8 +65,8 @@ service:
     # The Portal sets the omid session cookie (see src/wsgi.py).
     oci-load-balancer.oraclecloud.com/session-persistence-config: '{"cookieName":"omid"}'
 
-# Reserved for profile or workload-principal deployments. The current portal
-# templates do not mount these fields; keep OCI credentials outside the chart.
 serviceAccount:
   create: false
   name: ""
+  automountServiceAccountToken: false
+  annotations: {}

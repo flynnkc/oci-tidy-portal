@@ -31,6 +31,9 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
         spec:
+          {{- if and (eq (lower .Values.config.authType) "workload_identity") (not (and .Values.serviceAccount.create .Values.serviceAccount.automountServiceAccountToken)) }}
+          {{- fail "workload_identity requires serviceAccount.create=true and serviceAccount.automountServiceAccountToken=true" }}
+          {{- end }}
           serviceAccountName: {{ include "ociextirpater.serviceAccountName" . }}
           automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
           restartPolicy: {{ .Values.cronJob.restartPolicy }}

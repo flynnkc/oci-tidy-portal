@@ -4,6 +4,7 @@ region             = "us-ashburn-1"
 compartment_ocid   = "ocid1.compartment.oc1..<deployment-compartment>"
 identity_domain_id = "ocid1.domain.oc1..<identity-domain>"
 label              = "oci-tidy"
+oke_cluster_type   = "BASIC_CLUSTER" # Use ENHANCED_CLUSTER for workload identity.
 
 # Update this after the LoadBalancer is created if its final URL differs.
 confidential_application_base_url = "https://portal.example.com"

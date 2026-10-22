@@ -7,7 +7,13 @@ metadata:
 data:
   EXTIRPATER_COMPARTMENT: {{ join "," (required "config.compartments is required" .Values.config.compartments) | quote }}
   EXTIRPATER_TENANCY: {{ required "config.tenancy is required" .Values.config.tenancy | quote }}
+  {{- if eq (lower .Values.config.authType) "instance_principal" }}
+  EXTIRPATER_INSTANCE_PRINCIPAL: "true"
+  {{- else if eq (lower .Values.config.authType) "workload_identity" }}
   EXTIRPATER_OKE_WORKLOAD_IDENTITY: "true"
+  {{- else }}
+  {{- fail "config.authType must be instance_principal or workload_identity" }}
+  {{- end }}
   EXTIRPATER_THREADS: {{ .Values.config.threads | quote }}
   {{- with .Values.config.regions }}
   EXTIRPATER_REGIONS: {{ . | quote }}

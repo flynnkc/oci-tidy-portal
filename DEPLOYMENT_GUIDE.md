@@ -8,12 +8,13 @@ umbrella repository:
 | --- | --- | --- |
 | OCI Management Portal | Helm on OKE | Authenticated interface for resource discovery and lifecycle actions |
 | Tag Updater | Helm CronJob on OKE | Periodically updates defined-tag defaults |
-| OCI Extirpater | Suspended Helm CronJob on OKE | Scheduled cleanup of explicitly selected compartments |
+| OCI Extirpater | Helm CronJob on OKE | Scheduled cleanup of explicitly selected compartments |
 
-The Portal is the primary deployment. Tag Updater and Extirpater are optional,
-independent automation components; deploy either only after approving its IAM
-scope and schedule. In particular, Extirpater deletes resources and its target
-compartment must be reviewed carefully.
+Deploy the Portal, Tag Updater, and Extirpater together. Tag Updater maintains
+the configured tag defaults, and Extirpater performs scheduled cleanup in its
+explicitly selected compartments. Review each component's IAM scope and
+schedule. Extirpater deletes resources, so install its CronJob suspended while
+reviewing its targets and permissions, then enable it to complete deployment.
 
 The deployable infrastructure and charts are owned by this repository:
 
@@ -44,23 +45,24 @@ The deployable infrastructure and charts are owned by this repository:
 Umbrella repository (pinned source submodule commits + central deployment assets)
   ├── deploy/terraform → OCI Identity Domain, networking, OKE, IAM baseline
   ├── OCIR ← Portal image + Tag Updater image + Extirpater image
-  ├── Portal Helm chart → OKE Deployment + Service
-  ├── Tag Updater Helm chart → OKE CronJob + workload identity
-  └── Extirpater Helm chart → suspended OKE CronJob + workload identity
+  ├── Portal Helm chart → OKE Deployment + Service; instance or workload principal
+  ├── Tag Updater Helm chart → OKE CronJob + instance principal or workload identity
+  └── Extirpater Helm chart → OKE CronJob; instance or workload principal
 ```
 
 Use this order for a new environment:
 
 1. Clone the umbrella release and initialize the exact submodule revisions.
-2. Decide the managed tags, cleanup compartment, and which optional automation
-   components are approved.
+2. Decide the managed tags, cleanup compartment, and IAM scopes and schedules
+   for Tag Updater and Extirpater.
 3. Provision the Portal's OKE, networking, Identity Domain application, and
    baseline IAM through OCI Resource Manager using `deploy/terraform`.
-4. Create OCIR repositories, publish the Portal image, and deploy the Portal.
-5. Optionally publish and deploy Tag Updater after creating workload-identity
-   policies.
-6. Optionally install Extirpater as a suspended OKE CronJob, then enable it
-   only after its schedule, delete permissions, and cleanup target are reviewed.
+4. Create OCIR repositories, publish all three images, and deploy the Portal.
+5. Deploy Tag Updater after configuring the instance
+   principal or workload identity for the selected cluster type.
+6. Install Extirpater as a suspended OKE CronJob using the selected cluster's
+   identity track, then enable it after its schedule, delete permissions, and
+   cleanup target are reviewed.
 
 ## Prerequisites
 
@@ -74,7 +76,8 @@ target tenancy:
 - a cleanup compartment, including approval to perform lifecycle actions there;
 - an OCI Identity Domain for the Portal's confidential OIDC application;
 - OCIR repositories;
-- IAM policies, dynamic groups, and OKE workload-identity policies;
+- IAM policies and dynamic groups for basic OKE, or workload-identity policies
+  for enhanced OKE;
 - Resource Manager stacks and plan/apply jobs in the deployment compartment;
 
 Use a dedicated deployment compartment where practical. Do not use that same
@@ -100,11 +103,13 @@ inside the WSL distribution.
 - OCI region and tenancy home region;
 - deployment and cleanup compartment OCIDs;
 - OKE worker architecture (`linux/arm64`, `linux/amd64`, or both);
+- basic OKE with worker-node instance principals, or enhanced OKE with
+  workload identity for all three components;
 - Portal public URL and TLS/ingress approach;
 - Identity Domain OCID;
 - defined-tag namespace/key and expiry namespace/key used by the Portal;
 - Tag Updater schedule, target compartments, and tag default values;
-- whether Extirpater is approved, its cleanup target, resource categories,
+- Extirpater's approved cleanup target, resource categories,
   exclusions, and CronJob schedule.
 
 ## Prepare the pinned release
@@ -171,14 +176,17 @@ Use these inputs for either method:
 | Stack variable | Value |
 | --- | --- |
 | `compartment_ocid` | `${DEPLOYMENT_COMPARTMENT_OCID}` |
+| `oke_cluster_type` | `BASIC_CLUSTER` for instance principals (default), or `ENHANCED_CLUSTER` for workload identity |
 | `identity_domain_id` | `${IDENTITY_DOMAIN_OCID}` |
 | `label` | A unique environment prefix, such as `tidy-prod` |
 | `confidential_application_base_url` | `${PORTAL_URL}` |
 | `worker_ssh_public_key` | Operator public key, if node access is needed |
 | Worker shape, OCPU, memory, and Kubernetes version | Values approved for the environment |
 
-Review the networking inputs before applying, particularly API endpoint
-exposure, permitted ingress CIDRs, and load balancer ingress. The supplied
+Select the cluster type before applying the stack; use the corresponding
+identity track in each component section below. Review the networking inputs,
+particularly API endpoint exposure, permitted ingress CIDRs, and load balancer
+ingress. The supplied
 `schema.yaml` presents the stack variables in Resource Manager.
 
 ### Primary method: OCI Resource Manager
@@ -219,7 +227,9 @@ cp deploy/terraform/terraform.tfvars.example deploy/terraform/terraform.tfvars
 
 Edit the ignored `deploy/terraform/terraform.tfvars` with the inputs above.
 Set `tenancy_ocid` to the value of `TENANCY_OCID` and `region` to the value of
-`OCI_REGION`.
+`OCI_REGION`. Keep `oke_cluster_type = "BASIC_CLUSTER"` for the instance-principal
+tracks, or set it to `"ENHANCED_CLUSTER"` for the workload-identity tracks.
+Review the plan carefully before changing the type of an existing cluster.
 Review the network settings in that file. Then select one CLI and apply:
 
 ```bash
@@ -240,7 +250,7 @@ Record these outputs securely after the apply completes:
 - `identity_domain_endpoint`
 - `confidential_application_client_id`
 - `confidential_application_client_secret`
-- OKE cluster OCID/name from the OCI Console
+- `oke_cluster_ocid` and `oke_cluster_type`
 
 Set the non-secret chart inputs in your shell before deploying the Portal:
 
@@ -450,9 +460,13 @@ configured together.
 ### Configure runtime IAM
 
 The Portal uses the signed-in user's context for Portal actions. Cost and usage
-operations use its configured runtime identity. For the documented
-`instance_principal` configuration, create a dynamic group containing the OKE
-worker nodes (or their compartment). For example:
+operations use its configured runtime identity. Choose the track matching the
+OKE cluster. The chart defaults to the basic-cluster settings.
+
+#### Track 1: Basic OKE cluster — instance principal (default)
+
+Create a dynamic group containing the worker nodes that run the Portal (or
+their dedicated compartment). For example:
 
 ```text
 ALL {instance.compartment.id = '<worker-node-compartment-ocid>'}
@@ -473,12 +487,43 @@ shared with other workloads. Start with the Portal component guide's runtime
 IAM section, then scope policies to the cleanup compartment rather than tenancy
 where possible.
 
+The chart defaults to `config.authType: instance_principal`, uses the default
+Kubernetes service account, and does not mount its token. Keep these defaults
+in `values.local.yaml` for a basic cluster.
+
+#### Track 2: Enhanced OKE cluster — workload identity
+
+Use the Portal namespace `oci-management-portal` and the chart-created service
+account `oci-management-portal` with the Helm release name in this guide. Grant
+the workload the runtime permissions needed by the enabled Portal features;
+for the cost and compartment discovery examples above:
+
+```text
+Allow any-user to read usage-reports in tenancy where all {request.principal.type = 'workload', request.principal.namespace = 'oci-management-portal', request.principal.service_account = 'oci-management-portal', request.principal.cluster_id = '<cluster-ocid>'}
+Allow any-user to inspect compartments in tenancy where all {request.principal.type = 'workload', request.principal.namespace = 'oci-management-portal', request.principal.service_account = 'oci-management-portal', request.principal.cluster_id = '<cluster-ocid>'}
+```
+
+Set these fields in `values.local.yaml` to select workload identity:
+
+```yaml
+config:
+  authType: workload_principal
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+```
+
+The chart then creates the service account and mounts its token into Portal
+pods. Add narrowly scoped resource-family permissions for any other approved
+Portal features.
+
 ### Install the Helm release
 
 Create `deploy/helm/oci-management-portal/values.local.yaml` from the chart's
 `values.yaml` defaults. Set deployment-specific options such as the session
-backend there. The chart's HTTPS listener and OCI session persistence settings
-are already enabled. The Helm command below supplies the certificate OCID,
+backend and the selected identity track there. The chart's HTTPS listener and
+OCI session persistence settings are already enabled. The Helm command below
+supplies the certificate OCID,
 image, public URL, tag settings, cleanup compartment, and Identity Domain
 values collected earlier.
 Helm does not read these shell variables automatically; the `--set-string`
@@ -522,61 +567,13 @@ helm upgrade --install oci-management-portal \
 
 ## Deploy Tag Updater
 
-Skip this section if periodic tag-default updates are not approved. Choose one
-runtime identity model: workload identity for an enhanced OKE cluster, or the
-worker-node instance principal for a standard/basic cluster. Do not grant both
-models to the same deployment.
+Select the track for your OKE cluster: **instance principal for a basic cluster** (the
+chart default), or **workload identity for an enhanced cluster**. Basic clusters
+do not support workload identity. Configure only the selected track's IAM
+policy and Helm settings. Review the permissions before applying them: Tag
+Updater can change tag defaults in every permitted scope.
 
-### Create the runtime IAM policy
-
-#### Workload identity (enhanced OKE clusters)
-
-Obtain the cluster OCID and choose the Kubernetes namespace/service-account
-names. The chart's default service-account name is the release name,
-`tag-updater`. Create IAM policies following this pattern, with the exact
-cluster OCID and names:
-
-```text
-Allow any-user to manage tag-defaults in tenancy where all {
-  request.principal.type = 'workload',
-  request.principal.namespace = 'tag-updater',
-  request.principal.service_account = 'tag-updater',
-  request.principal.cluster_id = '<cluster-ocid>'
-}
-Allow any-user to use tag-namespaces in tenancy where all {
-  request.principal.type = 'workload',
-  request.principal.namespace = 'tag-updater',
-  request.principal.service_account = 'tag-updater',
-  request.principal.cluster_id = '<cluster-ocid>'
-}
-```
-
-Narrow policy scope where OCI policy syntax supports it. Review the policy
-before applying: Tag Updater can change tag defaults in every permitted scope.
-
-#### Instance principal (basic OKE clusters)
-
-Create a dynamic group for the node instances that run Tag Updater. A
-compartment-based membership rule is convenient for a dedicated node pool:
-
-```text
-ALL {instance.compartment.id = '<tag-updater-node-compartment-ocid>'}
-```
-
-Grant that dynamic group the same tag permissions as the workload identity:
-
-```text
-Allow dynamic-group <tag-updater-node-dynamic-group> to manage tag-defaults in tenancy
-Allow dynamic-group <tag-updater-node-dynamic-group> to use tag-namespaces in tenancy
-```
-
-This identity is shared by every pod on the matching nodes. Use dedicated nodes
-or accept that shared scope deliberately. In the Helm command below, replace
-`--set config.ociSigner="WORKLOAD_IDENTITY"` with
-`--set config.ociSigner="INSTANCE_PRINCIPAL"`; no workload-identity policy is
-needed for this option.
-
-### Create the namespace and pull secret
+### Shared setup: create the namespace and pull secret
 
 ```bash
 export TAG_UPDATER_NAMESPACE="tag-updater"
@@ -598,31 +595,90 @@ fi
 unset OCIR_AUTH_TOKEN
 ```
 
-### Install the CronJob
+Review the schedule before installing; the chart default is daily at midnight.
+Set `config.compartments` only when the job must be constrained to specific
+compartments. Omit it only when tenancy-wide tag-default updates are intended.
+`config.tagKey` is the defined tag whose default Tag Updater changes; the
+examples use the expiry key rather than the Portal's owner tag.
 
-Review the schedule before running this command; the chart default is daily at
-midnight. Set `config.compartments` only when the job must be constrained to
-specific compartments. Omit it only when tenancy-wide tag-default updates are
-intended.
+### Track 1: Basic OKE cluster — instance principal (default)
+
+Create a dynamic group for the worker-node instances that run Tag Updater. A
+compartment-based membership rule works for a dedicated node compartment:
+
+```text
+ALL {instance.compartment.id = '<tag-updater-node-compartment-ocid>'}
+```
+
+Grant that dynamic group the tag permissions:
+
+```text
+Allow dynamic-group <tag-updater-node-dynamic-group> to manage tag-defaults in tenancy
+Allow dynamic-group <tag-updater-node-dynamic-group> to use tag-namespaces in tenancy
+```
+
+Every pod on a matching node can use that node's instance principal. Use a
+dedicated node pool or compartment when this scope must be isolated. The chart
+defaults to `INSTANCE_PRINCIPAL` and does not mount a service-account token.
+Install the CronJob with the instance-principal signer explicit:
 
 ```bash
 helm upgrade --install tag-updater \
   ./deploy/helm/tag-updater \
   --namespace "${TAG_UPDATER_NAMESPACE}" \
-  --set image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${TAG_UPDATER_REPOSITORY}" \
-  --set image.tag="${TAG_UPDATER_TAG}" \
+  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${TAG_UPDATER_REPOSITORY}" \
+  --set-string image.tag="${TAG_UPDATER_TAG}" \
   --set-string config.tagNamespace="${EXPIRY_NAMESPACE}" \
   --set-string config.tagKey="${EXPIRY_KEY}" \
-  --set config.ociSigner="WORKLOAD_IDENTITY" \
-  --set config.ociIdentityRegion="${OCI_HOME_REGION}" \
-  --set config.ociResourcePrincipalRegion="${OCI_REGION}" \
-  --set config.ociTenancyId="${TENANCY_OCID}" \
-  --set imagePullSecrets=ocir-pull-secret
+  --set-string config.ociSigner="INSTANCE_PRINCIPAL" \
+  --set-string config.ociIdentityRegion="${OCI_HOME_REGION}" \
+  --set-string config.ociResourcePrincipalRegion="${OCI_REGION}" \
+  --set-string config.ociTenancyId="${TENANCY_OCID}" \
+  --set-string imagePullSecrets="ocir-pull-secret"
 ```
 
-`config.tagKey` is the defined tag whose default Tag Updater changes. It need
-not be the Portal's owner tag; in the example above it is the expiry key. Set
-it deliberately for the desired lifecycle model.
+### Track 2: Enhanced OKE cluster — workload identity
+
+Obtain the cluster OCID and choose the Kubernetes namespace and service-account
+names. With this release name, the chart creates the service account
+`tag-updater`. Create IAM policies with the exact cluster OCID and names:
+
+```text
+Allow any-user to manage tag-defaults in tenancy where all {
+  request.principal.type = 'workload',
+  request.principal.namespace = 'tag-updater',
+  request.principal.service_account = 'tag-updater',
+  request.principal.cluster_id = '<cluster-ocid>'
+}
+Allow any-user to use tag-namespaces in tenancy where all {
+  request.principal.type = 'workload',
+  request.principal.namespace = 'tag-updater',
+  request.principal.service_account = 'tag-updater',
+  request.principal.cluster_id = '<cluster-ocid>'
+}
+```
+
+Install the CronJob with its service account and token enabled for workload
+identity:
+
+```bash
+helm upgrade --install tag-updater \
+  ./deploy/helm/tag-updater \
+  --namespace "${TAG_UPDATER_NAMESPACE}" \
+  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${TAG_UPDATER_REPOSITORY}" \
+  --set-string image.tag="${TAG_UPDATER_TAG}" \
+  --set-string config.tagNamespace="${EXPIRY_NAMESPACE}" \
+  --set-string config.tagKey="${EXPIRY_KEY}" \
+  --set-string config.ociSigner="WORKLOAD_IDENTITY" \
+  --set-string config.ociIdentityRegion="${OCI_HOME_REGION}" \
+  --set-string config.ociResourcePrincipalRegion="${OCI_REGION}" \
+  --set-string config.ociTenancyId="${TENANCY_OCID}" \
+  --set serviceAccount.create=true \
+  --set serviceAccount.automountServiceAccountToken=true \
+  --set-string imagePullSecrets="ocir-pull-secret"
+```
+
+### Test the selected track
 
 Run an immediate, observable test before relying on the schedule:
 
@@ -635,67 +691,120 @@ kubectl logs --namespace "${TAG_UPDATER_NAMESPACE}" job/tag-updater-smoke-test
 
 ## Deploy Extirpater
 
-Skip this section unless scheduled resource deletion has been approved.
 Extirpater runs as an OKE CronJob from `deploy/helm/ociextirpater/`; its chart
-is suspended by default.
+is suspended by default for initial review. Complete this section to enable
+scheduled cleanup. Select the instance-principal track for a basic OKE cluster
+or the workload-identity track for an enhanced cluster.
 
-1. Create an OCI workload-identity policy for the Extirpater service account.
-   Scope it to the target cleanup compartments and resource families wherever
-   OCI policy syntax permits; do not grant blanket tenancy management unless
-   that is the explicitly approved cleanup scope.
-2. Create the namespace and an OCIR pull secret using the same workflow as Tag
-   Updater:
+### Shared setup: create the namespace and pull secret
 
-   ```bash
-   export EXTIRPATER_NAMESPACE="ociextirpater"
-   kubectl create namespace "${EXTIRPATER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+```bash
+export EXTIRPATER_NAMESPACE="ociextirpater"
+kubectl create namespace "${EXTIRPATER_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-   printf 'OCIR auth token: '
-   IFS= read -r -s OCIR_AUTH_TOKEN
-   printf '\n'
-   if [[ -z "${REGISTRY:-}" || -z "${OCIR_USERNAME:-}" || -z "${OCIR_AUTH_TOKEN:-}" ]]; then
-     printf 'Set REGISTRY, OCIR_USERNAME, and a non-empty OCIR_AUTH_TOKEN before creating the pull secret.\n' >&2
-   else
-     kubectl create secret docker-registry ocir-pull-secret \
-       --namespace "${EXTIRPATER_NAMESPACE}" \
-       --docker-server="${REGISTRY}" \
-       --docker-username="${OCIR_USERNAME}" \
-       --docker-password="${OCIR_AUTH_TOKEN}" \
-       --dry-run=client -o yaml | kubectl apply -f -
-   fi
-   unset OCIR_AUTH_TOKEN
-   ```
+printf 'OCIR auth token: '
+IFS= read -r -s OCIR_AUTH_TOKEN
+printf '\n'
+if [[ -z "${REGISTRY:-}" || -z "${OCIR_USERNAME:-}" || -z "${OCIR_AUTH_TOKEN:-}" ]]; then
+  printf 'Set REGISTRY, OCIR_USERNAME, and a non-empty OCIR_AUTH_TOKEN before creating the pull secret.\n' >&2
+else
+  kubectl create secret docker-registry ocir-pull-secret \
+    --namespace "${EXTIRPATER_NAMESPACE}" \
+    --docker-server="${REGISTRY}" \
+    --docker-username="${OCIR_USERNAME}" \
+    --docker-password="${OCIR_AUTH_TOKEN}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
+unset OCIR_AUTH_TOKEN
+```
 
-3. Create an ignored file at
-   `deploy/helm/ociextirpater/values.local.yaml`. Set the image, OCI tenancy,
-   one or more `config.compartments`, the required OKE workload-identity
-   service-account annotations, and a deliberately reviewed schedule. Keep
-   `cronJob.suspend: true`.
-4. Install the suspended release:
+Create the ignored `deploy/helm/ociextirpater/values.local.yaml` from the
+chart's `values.yaml`. Set at least one `config.compartments` OCID, approved
+`config.objects` and `config.regions`, a reviewed schedule, and the pull secret:
 
-   ```bash
-   helm upgrade --install ociextirpater \
-     ./deploy/helm/ociextirpater \
-     --namespace "${EXTIRPATER_NAMESPACE}" \
-     --values deploy/helm/ociextirpater/values.local.yaml \
-     --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
-     --set-string image.tag="${EXTIRPATER_TAG}" \
-     --set-string config.tenancy="${TENANCY_OCID}"
-   ```
+```yaml
+imagePullSecrets:
+  - name: ocir-pull-secret
+config:
+  compartments:
+    - ocid1.compartment.oc1..<approved-target>
+cronJob:
+  suspend: true
+```
 
-5. Confirm the CronJob is suspended and inspect its rendered configuration:
+Keep `cronJob.suspend: true` while configuring the selected identity track.
+Grant only the resource-family permissions needed for the approved object
+categories and target compartments.
 
-   ```bash
-   kubectl get cronjob ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
-   helm template ociextirpater ./deploy/helm/ociextirpater \
-     --namespace "${EXTIRPATER_NAMESPACE}" \
-     --values deploy/helm/ociextirpater/values.local.yaml
-   ```
+### Track 1: Basic OKE cluster — instance principal (default)
+
+Create a dynamic group for the worker-node instances that run Extirpater. For
+nodes in a dedicated compartment, use this membership rule:
+
+```text
+ALL {instance.compartment.id = '<extirpater-node-compartment-ocid>'}
+```
+
+Grant the dynamic group the approved delete permissions, repeating the policy
+for each required resource family and target compartment:
+
+```text
+Allow dynamic-group <extirpater-node-dynamic-group> to manage <approved-resource-family> in compartment id <approved-target-compartment-ocid>
+```
+
+The chart defaults to `config.authType: instance_principal` and does not mount
+a service-account token. These node permissions are available to other pods on
+matching nodes; isolate the nodes when that shared scope is unacceptable.
+
+### Track 2: Enhanced OKE cluster — workload identity
+
+With the namespace and release name in this guide, the chart creates service
+account `ociextirpater`. Grant permissions to that exact workload, repeating
+the policy for each approved resource family and target compartment:
+
+```text
+Allow any-user to manage <approved-resource-family> in compartment id <approved-target-compartment-ocid> where all {request.principal.type = 'workload', request.principal.namespace = 'ociextirpater', request.principal.service_account = 'ociextirpater', request.principal.cluster_id = '<cluster-ocid>'}
+```
+
+Set these fields in `values.local.yaml`:
+
+```yaml
+config:
+  authType: workload_identity
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+```
+
+### Install and review the suspended CronJob
+
+After configuring the selected track, install the suspended release:
+
+```bash
+helm upgrade --install ociextirpater \
+  ./deploy/helm/ociextirpater \
+  --namespace "${EXTIRPATER_NAMESPACE}" \
+  --values deploy/helm/ociextirpater/values.local.yaml \
+  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
+  --set-string image.tag="${EXTIRPATER_TAG}" \
+  --set-string config.tenancy="${TENANCY_OCID}"
+```
+
+Confirm that the CronJob is suspended and inspect the rendered signer setting:
+
+```bash
+kubectl get cronjob ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
+helm template ociextirpater ./deploy/helm/ociextirpater \
+  --namespace "${EXTIRPATER_NAMESPACE}" \
+  --values deploy/helm/ociextirpater/values.local.yaml \
+  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
+  --set-string config.tenancy="${TENANCY_OCID}"
+```
 
 Only after independently validating the target compartments, object categories,
-workload identity, IAM policy, image, and schedule, set `cronJob.suspend: false`
-in the local values file and run `helm upgrade` again. A successful installation
-is not approval to delete resources.
+selected principal, IAM policy, image, and schedule, set
+`cronJob.suspend: false` in the local values file and run `helm upgrade` again.
+A successful installation is not approval to delete resources.
 
 ## Validate the environment
 
@@ -720,12 +829,13 @@ kubectl logs --namespace "${TAG_UPDATER_NAMESPACE}" job/tag-updater-smoke-test
 ```
 
 Verify the tag default changed only in the intended scope. Investigate any
-authentication error as a workload-identity policy or service-account/cluster
-name mismatch before changing the job's IAM scope.
+authentication error against the selected track: node dynamic-group membership
+and IAM policy for basic clusters, or workload identity policy and
+namespace/service-account/cluster names for enhanced clusters.
 
 ### Extirpater
 
-Confirm the CronJob remains suspended until it has been approved. After a
+Confirm the CronJob is enabled after the scope and permissions review. After a
 controlled run, inspect the Job logs and confirm the cleanup target is the
 intended compartment:
 
@@ -757,9 +867,9 @@ release revisions, and the applied IAM policy names in the change record.
 | `exec format error` in a pod | Compare node architecture with the image platform; rebuild for the target architecture or publish a multi-architecture manifest. |
 | Pod cannot pull from OCIR | Check registry host, image repository/tag, `ocirsecret`, OCIR username format, auth token, and repository permissions. |
 | Portal login redirects or fails | Verify `${PORTAL_URL}/callback`, Identity Domain endpoint/client ID/client secret, and proxy configuration. |
-| Portal pod starts but OCI calls fail | Check configured auth type, runtime dynamic-group membership, and least-privilege IAM policies. |
-| Tag Updater job fails authentication | Verify enhanced OKE/workload identity, cluster OCID, namespace, service-account name, and IAM policy conditions. |
-| Extirpater does not run | Check whether the CronJob is suspended, its schedule, Job events, image pull secret, and workload-identity IAM policy. |
+| Portal pod starts but OCI calls fail | On basic OKE, check `instance_principal`, worker-node dynamic-group membership, and IAM policy. On enhanced OKE, check `workload_principal`, service account, cluster OCID, and workload IAM policy. |
+| Tag Updater job fails authentication | On basic OKE, check `INSTANCE_PRINCIPAL`, worker-node dynamic-group membership, and IAM policy. On enhanced OKE, check `WORKLOAD_IDENTITY`, cluster OCID, namespace, service account, and IAM policy. |
+| Extirpater does not run | Check whether the CronJob is suspended, its schedule, Job events, and image pull secret. For OCI authentication, check node dynamic-group membership on basic OKE or the service account and workload IAM policy on enhanced OKE. |
 
 For component behavior and troubleshooting beyond this deployment flow, consult
 the source project documentation pinned under `projects/`.

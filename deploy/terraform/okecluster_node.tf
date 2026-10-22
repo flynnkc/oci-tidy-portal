@@ -2,6 +2,7 @@ resource "oci_containerengine_cluster" "cluster" {
   compartment_id     = var.compartment_ocid
   name               = "${var.label}-cluster"
   kubernetes_version = local.effective_k8s_version
+  type               = var.oke_cluster_type
   vcn_id             = oci_core_vcn.vcn.id
 
   cluster_pod_network_options {

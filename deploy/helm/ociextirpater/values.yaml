@@ -10,10 +10,9 @@ nameOverride: ""
 fullnameOverride: ""
 
 serviceAccount:
-  create: true
+  create: false
   name: ""
-  automountServiceAccountToken: true
-  # Add the OCI OKE workload-identity annotation required by your cluster.
+  automountServiceAccountToken: false
   annotations: {}
 
 cronJob:
@@ -30,6 +29,8 @@ cronJob:
 config:
   # OCI compartment OCIDs. At least one target is required.
   compartments: []
+  # instance_principal for basic OKE; workload_identity for enhanced OKE.
+  authType: instance_principal
   # Required when authentication is OKE workload identity.
   tenancy: ""
   regions: ""
