@@ -16,34 +16,54 @@ default to the checked-out short Git SHA when the image-build helper is used;
 setting them explicitly keeps the
 build and Helm deployment commands pinned to the same image.
 
+### Shared infrastructure and component settings
+
 | Variable | Description | Projects | Required | Default value | Example value |
 | --- | --- | --- | --- | --- | --- |
-| `OCI_REGION` | OCI region for infrastructure and application configuration. | Portal, Tag Updater, Extirpater | Yes, for deployment; no, for an image build | None | `us-ashburn-1` |
-| `OCI_HOME_REGION` | Tenancy home region used by Tag Updater for Identity calls. | Tag Updater | Yes, for Tag Updater | None | `us-ashburn-1` |
+| `OCI_REGION` | OCI region for infrastructure and application configuration; Extirpater's cleanup scope defaults to all subscribed regions it can access. | Shared infrastructure, Portal, Tag Updater | Yes, for deployment; no, for an image build | None | `us-ashburn-1` |
 | `TENANCY_OCID` | OCID of the OCI tenancy used by infrastructure and automation. | Shared infrastructure, Tag Updater, Extirpater | Yes | None | `ocid1.tenancy.oc1..example` |
 | `DEPLOYMENT_COMPARTMENT_OCID` | Compartment where Terraform creates the deployment infrastructure. | Shared infrastructure | Yes | None | `ocid1.compartment.oc1..example` |
-| `CLEANUP_COMPARTMENT_OCID` | Compartment configured for Portal cleanup actions. | Portal | Yes, for the Portal chart | None | `ocid1.compartment.oc1..example` |
-| `IDENTITY_DOMAIN_OCID` | OCID of the Identity Domain that authenticates Portal users. | Portal | Yes | None | `ocid1.domain.oc1..example` |
-| `PORTAL_URL` | Public HTTPS URL for the Portal. | Portal | Yes | None | `https://portal.example.com` |
-| `PORTAL_CERTIFICATE_OCID` | OCI Certificates leaf certificate OCID for the Portal HTTPS listener; leave empty only when using a Kubernetes TLS Secret. | Portal | Yes, for the default HTTPS method | None | `ocid1.certificate.oc1..example` |
-| `TAG_NAMESPACE` | OCI namespace for the Portal's owner or creator tag. | Portal | Yes | None | `Usage-Management` |
-| `TAG_KEY` | OCI tag key configured for the Portal. | Portal | Yes, for Portal tag settings | None | `Owner` |
+| `CLEANUP_COMPARTMENT_OCID` | Reviewed cleanup compartment used by the Portal and Extirpater. | Portal, Extirpater | Yes | None | `ocid1.compartment.oc1..example` |
 | `EXPIRY_NAMESPACE` | OCI namespace for the expiry tag and Tag Updater's tag default. | Portal, Tag Updater | Yes | None | `Usage-Management` |
 | `EXPIRY_KEY` | OCI key for the expiry tag and Tag Updater's tag default. | Portal, Tag Updater | Yes | None | `Expires` |
 | `OCIR_NAMESPACE` | Object Storage namespace used in OCIR image paths. | Portal, Tag Updater, Extirpater | Yes, to push or deploy images | `oci os ns get` output when the build helper runs | `mytenancynamespace` |
 | `REGISTRY` | OCIR registry host for `OCI_REGION`; used by image references and pull secrets. | Portal, Tag Updater, Extirpater | Yes, to deploy images | None | `iad.ocir.io` for `us-ashburn-1` |
 | `OCIR_USERNAME` | Username used with an OCIR auth token to push and pull images. | Portal, Tag Updater, Extirpater | Yes, to use private OCIR repositories | None | `<namespace>/<identity-domain>/<username>` |
+
+### OCI Management Portal
+
+| Variable | Description | Projects | Required | Default value | Example value |
+| --- | --- | --- | --- | --- | --- |
+| `IDENTITY_DOMAIN_OCID` | OCID of the Identity Domain that authenticates Portal users. | Portal | Yes | None | `ocid1.domain.oc1..example` |
+| `PORTAL_URL` | Public HTTPS URL for the Portal. | Portal | Yes | None | `https://portal.example.com` |
+| `PORTAL_CERTIFICATE_OCID` | OCI Certificates leaf certificate OCID for the Portal HTTPS listener; leave empty only when using a Kubernetes TLS Secret. | Portal | Yes, for the default HTTPS method | None | `ocid1.certificate.oc1..example` |
+| `TAG_NAMESPACE` | OCI namespace for the Portal's owner or creator tag. | Portal | Yes | None | `Usage-Management` |
+| `TAG_KEY` | OCI tag key configured for the Portal. | Portal | Yes, for Portal tag settings | None | `Owner` |
 | `PORTAL_REPOSITORY` | OCIR repository name for the Portal image. | Portal | No | `oci-management-portal` | `oci-management-portal` |
-| `TAG_UPDATER_REPOSITORY` | OCIR repository name for the Tag Updater image. | Tag Updater | No | `tag-updater` | `tag-updater` |
-| `EXTIRPATER_REPOSITORY` | OCIR repository name for the Extirpater image. | Extirpater | No | `ociextirpater` | `ociextirpater` |
 | `PORTAL_TAG` | Image tag selecting the Portal build revision. | Portal | No | Short SHA of `projects/oci-management-portal` `HEAD` | `a1b2c3d` |
-| `TAG_UPDATER_TAG` | Image tag selecting the Tag Updater build revision. | Tag Updater | No | Short SHA of `projects/tag-updater` `HEAD` | `d4e5f6a` |
-| `EXTIRPATER_TAG` | Image tag selecting the Extirpater build revision. | Extirpater | No | Short SHA of `projects/ociextirpater` `HEAD` | `b7c8d9e` |
 | `PORTAL_IDM_ENDPOINT` | Identity Domain endpoint returned by the infrastructure apply. | Portal | Yes, after provisioning | Infrastructure output | `https://idcs.example.com` |
 | `PORTAL_CLIENT_ID` | Confidential application client ID returned by the infrastructure apply. | Portal | Yes, after provisioning | Infrastructure output | `example-client-id` |
 | `PORTAL_NAMESPACE` | Kubernetes namespace for the Portal release. | Portal | No; set by the deployment guide | `oci-management-portal` | `oci-management-portal` |
+
+### Tag Updater
+
+| Variable | Description | Projects | Required | Default value | Example value |
+| --- | --- | --- | --- | --- | --- |
+| `OCI_HOME_REGION` | Tenancy home region used by Tag Updater for Identity calls. | Tag Updater | Yes, for Tag Updater | None | `us-ashburn-1` |
+| `TAG_UPDATER_REPOSITORY` | OCIR repository name for the Tag Updater image. | Tag Updater | No | `tag-updater` | `tag-updater` |
+| `TAG_UPDATER_TAG` | Image tag selecting the Tag Updater build revision. | Tag Updater | No | Short SHA of `projects/tag-updater` `HEAD` | `d4e5f6a` |
 | `TAG_UPDATER_NAMESPACE` | Kubernetes namespace for Tag Updater. | Tag Updater | No; set by the deployment guide | `tag-updater` | `tag-updater` |
+
+### OCI Extirpater
+
+| Variable | Description | Projects | Required | Default value | Example value |
+| --- | --- | --- | --- | --- | --- |
+| `EXTIRPATER_REPOSITORY` | OCIR repository name for the Extirpater image. | Extirpater | No | `ociextirpater` | `ociextirpater` |
+| `EXTIRPATER_TAG` | Image tag selecting the Extirpater build revision. | Extirpater | No | Short SHA of `projects/ociextirpater` `HEAD` | `b7c8d9e` |
 | `EXTIRPATER_NAMESPACE` | Kubernetes namespace for Extirpater. | Extirpater | No; set by the deployment guide | `ociextirpater` | `ociextirpater` |
+| `EXTIRPATER_OBJECTS` | Optional comma-separated resource categories; omit to use all default Extirpater categories. | Extirpater | No | All default categories | See the pinned Extirpater documentation |
+| `EXTIRPATER_SCHEDULE` | Reviewed CronJob schedule for Extirpater. | Extirpater | Yes | Daily at midnight in the deployment guide | `0 0 * * *` |
+| `EXTIRPATER_AUTH_TYPE` | OCI signer selected by the OKE cluster track. | Extirpater | Yes | `instance_principal` in the deployment guide | `workload_identity` |
 
 The deployment guide collects the initial inputs first, then sets the
 infrastructure outputs and component namespace variables at their respective

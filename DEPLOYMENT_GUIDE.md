@@ -718,23 +718,26 @@ fi
 unset OCIR_AUTH_TOKEN
 ```
 
-Create the ignored `deploy/helm/ociextirpater/values.local.yaml` from the
-chart's `values.yaml`. Set at least one `config.compartments` OCID, approved
-`config.objects` and `config.regions`, a reviewed schedule, and the pull secret:
+Review the resource categories and set the schedule for this deployment.
+Extirpater defaults to all of its default resource categories and all subscribed
+regions it can access; the Helm command does not set `config.regions` or use
+`OCI_REGION` for cleanup. `EXTIRPATER_OBJECTS` is optional: leave it unset to use
+all default categories, or set it to the comma-separated categories supported by
+the pinned Extirpater version. Review the
+[Extirpater documentation](projects/ociextirpater/README.MD) before choosing a
+subset or approving the default categories.
 
-```yaml
-imagePullSecrets:
-  - name: ocir-pull-secret
-config:
-  compartments:
-    - ocid1.compartment.oc1..<approved-target>
-cronJob:
-  suspend: true
+```bash
+# Optional: export EXTIRPATER_OBJECTS="<approved-comma-separated-categories>"
+export EXTIRPATER_SCHEDULE="0 0 * * *" # review the time and frequency
+export EXTIRPATER_AUTH_TYPE="instance_principal"
+export EXTIRPATER_SERVICE_ACCOUNT_CREATE="false"
+export EXTIRPATER_AUTOMOUNT_TOKEN="false"
 ```
 
-Keep `cronJob.suspend: true` while configuring the selected identity track.
-Grant only the resource-family permissions needed for the approved object
-categories and target compartments.
+The Helm flags below use the already collected `CLEANUP_COMPARTMENT_OCID` as
+Extirpater's target. Grant only the resource-family permissions needed for the
+approved categories and compartment.
 
 ### Track 1: Basic OKE cluster — instance principal (default)
 
@@ -766,44 +769,56 @@ the policy for each approved resource family and target compartment:
 Allow any-user to manage <approved-resource-family> in compartment id <approved-target-compartment-ocid> where all {request.principal.type = 'workload', request.principal.namespace = 'ociextirpater', request.principal.service_account = 'ociextirpater', request.principal.cluster_id = '<cluster-ocid>'}
 ```
 
-Set these fields in `values.local.yaml`:
+Select workload identity for the Helm commands below:
 
-```yaml
-config:
-  authType: workload_identity
-serviceAccount:
-  create: true
-  automountServiceAccountToken: true
+```bash
+export EXTIRPATER_AUTH_TYPE="workload_identity"
+export EXTIRPATER_SERVICE_ACCOUNT_CREATE="true"
+export EXTIRPATER_AUTOMOUNT_TOKEN="true"
 ```
 
 ### Install and review the suspended CronJob
 
-After configuring the selected track, install the suspended release:
+After configuring the selected track, install the CronJob with the collected
+variables. The chart keeps it suspended until it is explicitly enabled.
 
 ```bash
-helm upgrade --install ociextirpater \
-  ./deploy/helm/ociextirpater \
+helm upgrade --install ociextirpater ./deploy/helm/ociextirpater \
   --namespace "${EXTIRPATER_NAMESPACE}" \
-  --values deploy/helm/ociextirpater/values.local.yaml \
-  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
-  --set-string image.tag="${EXTIRPATER_TAG}" \
-  --set-string config.tenancy="${TENANCY_OCID}"
+  --set-string "image.repository=${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
+  --set-string "image.tag=${EXTIRPATER_TAG}" \
+  --set-string 'imagePullSecrets[0].name=ocir-pull-secret' \
+  --set-string "config.compartments[0]=${CLEANUP_COMPARTMENT_OCID}" \
+  --set-string "config.tenancy=${TENANCY_OCID}" \
+  --set-string "config.objects=${EXTIRPATER_OBJECTS:-}" \
+  --set-string "config.authType=${EXTIRPATER_AUTH_TYPE}" \
+  --set-string "cronJob.schedule=${EXTIRPATER_SCHEDULE}" \
+  --set "serviceAccount.create=${EXTIRPATER_SERVICE_ACCOUNT_CREATE}" \
+  --set "serviceAccount.automountServiceAccountToken=${EXTIRPATER_AUTOMOUNT_TOKEN}"
 ```
 
 Confirm that the CronJob is suspended and inspect the rendered signer setting:
 
 ```bash
 kubectl get cronjob ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
-helm template ociextirpater ./deploy/helm/ociextirpater \
-  --namespace "${EXTIRPATER_NAMESPACE}" \
-  --values deploy/helm/ociextirpater/values.local.yaml \
-  --set-string image.repository="${REGISTRY}/${OCIR_NAMESPACE}/${EXTIRPATER_REPOSITORY}" \
-  --set-string config.tenancy="${TENANCY_OCID}"
+helm get values ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
+helm get manifest ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
 ```
 
 Only after independently validating the target compartments, object categories,
-selected principal, IAM policy, image, and schedule, set
-`cronJob.suspend: false` in the local values file and run `helm upgrade` again.
+selected principal, IAM policy, image, and schedule, enable the CronJob with
+the same settings:
+
+```bash
+helm upgrade --install ociextirpater ./deploy/helm/ociextirpater \
+  --namespace "${EXTIRPATER_NAMESPACE}" \
+  --reuse-values \
+  --set cronJob.suspend=false
+kubectl get cronjob ociextirpater --namespace "${EXTIRPATER_NAMESPACE}"
+```
+
+Administrators who already use Helm values files can supply their own file
+instead of the equivalent `--set` flags.
 A successful installation is not approval to delete resources.
 
 ## Validate the environment
