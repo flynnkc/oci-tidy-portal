@@ -1,3 +1,6 @@
+{{- if not .Values.config.compartments }}
+{{- fail "config.compartments is required" }}
+{{- end }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -13,11 +16,11 @@ spec:
   concurrencyPolicy: {{ .Values.cronJob.concurrencyPolicy }}
   successfulJobsHistoryLimit: {{ .Values.cronJob.successfulJobsHistoryLimit }}
   failedJobsHistoryLimit: {{ .Values.cronJob.failedJobsHistoryLimit }}
-  {{- with .Values.cronJob.activeDeadlineSeconds }}
-  activeDeadlineSeconds: {{ . }}
-  {{- end }}
   jobTemplate:
     spec:
+      {{- with .Values.cronJob.activeDeadlineSeconds }}
+      activeDeadlineSeconds: {{ . }}
+      {{- end }}
       backoffLimit: {{ .Values.cronJob.backoffLimit }}
       template:
         metadata:
@@ -46,7 +49,7 @@ spec:
               image: {{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               args:
-                {{- range required "config.compartments is required" .Values.config.compartments }}
+                {{- range .Values.config.compartments }}
                 - -c
                 - {{ . | quote }}
                 {{- end }}
