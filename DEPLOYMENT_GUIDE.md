@@ -565,6 +565,115 @@ helm upgrade --install oci-management-portal \
   --set-string config.clientId="${PORTAL_CLIENT_ID}"
 ```
 
+### Scheduled expired-resource notifications
+
+The Portal chart includes the expired-resource report CronJob from the Portal
+`report_notification` branch. The pinned Portal source already contains both
+report commands; build its image with the existing image helper before enabling
+reports. This feature does not replace Tag Updater or Extirpater and does not
+delete resources. It is disabled by default to avoid unconfigured notifications
+and additional OCI API/Notifications usage. No Terraform or Resource Manager
+inputs are needed; configure it in the Portal Helm values.
+
+Choose one mode per release:
+
+- `managers` publishes a tenancy-wide summary to an existing OCI Notifications
+  topic. Create the topic, add the intended subscribers, and confirm their
+  subscriptions first. Every subscriber receives the shared summary.
+- `owners` groups resources by the Owner-tag email and provisions one dedicated
+  topic and EMAIL subscription per owner in `ownerNotifications.compartmentId`.
+  Owners must confirm subscriptions before reports are sent. Set
+  `allowedEmailDomains` to a comma-separated list of permitted exact domains.
+  Existing topics with missing or unexpected subscriptions require operator
+  review; do not add other recipients to owner topics.
+
+The job reuses the Portal's expiry/owner tags, URL, OCI identity, `ocirsecret`,
+ConfigMap, and `oci-management-portal-secrets`. `regions` is a comma-separated
+list of OCI region names; empty uses the application's subscribed-region discovery.
+The report searches expired resources across the tenancy; the owner notification
+compartment scopes topic storage, not the resource search. `maxItems` limits the
+ranked resource details, rather than the search scope.
+
+On basic OKE, extend the Portal worker-node dynamic group's runtime policy with
+read access to the resource types being searched, usage reports and compartments,
+and permission to publish to the manager topic. Scope Notifications access to
+its compartment and, where applicable, the selected topic. Owner mode also needs
+topic and subscription list/get/create access in its dedicated notification
+compartment, plus publish access. Review these grants with your OCI administrator;
+worker-node instance-principal permissions are available to other workloads on
+those nodes. On enhanced OKE, grant equivalent permissions to the Portal workload
+principal using the namespace, service account and cluster conditions shown above.
+The CronJob uses the same service account and token setting as the Portal.
+
+Add this block to `deploy/helm/oci-management-portal/values.local.yaml`, replacing
+the topic OCID and region with your reviewed values:
+
+```yaml
+expiredResourceReport:
+  enabled: true
+  suspend: true
+  dryRun: true
+  mode: managers
+  schedule: "0 9 1 * *" # 09:00 on the first day of each month
+  timeZone: "Etc/UTC" # Kubernetes 1.27+; empty uses controller time zone
+  regions: "us-ashburn-1"
+  maxItems: 25
+  notification:
+    topicId: "<manager-topic-ocid>"
+    region: "us-ashburn-1"
+    title: "OCI expired resources"
+```
+
+For owner delivery, set `mode: owners` and add:
+
+```yaml
+  ownerNotifications:
+    compartmentId: "<dedicated-notification-compartment-ocid>"
+    topicPrefix: "gitdash-expiry"
+    allowedEmailDomains: "example.com"
+```
+
+Keep this nested under `expiredResourceReport`. Owner mode ignores `topicId` and
+uses the configured notification region. Topic prefixes must start with a letter
+and contain 1–40 letters, digits, underscores or hyphens. Optional
+`notification.endpoint` overrides the manager Notifications endpoint.
+
+Rerun the complete Portal Helm command above so all collected deployment inputs
+are retained. Then run a manual preview; suspension only stops scheduled jobs:
+
+```bash
+REPORT_JOB="portal-expiry-preview-$(date +%s)"
+kubectl create job "${REPORT_JOB}" \
+  --from=cronjob/oci-management-portal-expired-report \
+  --namespace "${PORTAL_NAMESPACE}"
+kubectl logs --follow "job/${REPORT_JOB}" --namespace "${PORTAL_NAMESPACE}"
+kubectl wait --for=condition=complete "job/${REPORT_JOB}" \
+  --namespace "${PORTAL_NAMESPACE}" --timeout=600s
+```
+
+Dry runs read OCI data and log report content without creating topics,
+subscriptions or messages. Restrict access to these logs. Check recipients,
+resource selection, permissions and report content. Then set `dryRun: false`
+and `suspend: false` in the values file and rerun the complete Portal Helm command.
+Owner mode creates confirmation emails on its first live run and sends reports
+only after confirmation. It enforces `Forbid`, `backoffLimit: 0`, and
+`restartPolicy: Never` to reduce duplicate delivery after partial failures.
+Manager mode defaults to `Forbid` with two Job retries; a retry may repeat a
+notification. Review Job logs before manually rerunning a failed report.
+
+```bash
+kubectl get cronjob oci-management-portal-expired-report --namespace "${PORTAL_NAMESPACE}"
+kubectl get jobs --namespace "${PORTAL_NAMESPACE}"
+```
+
+To pause reporting, set `expiredResourceReport.suspend: true` and rerun the Portal
+Helm command. To remove the CronJob, set `enabled: false`. Existing Jobs and OCI
+topics/subscriptions require separate review and cleanup. If using
+`config.existingConfigMap`, supply the `OCI_MGMT_DASH_REPORT_*` environment keys
+listed in the chart's ConfigMap template there; Helm cannot update that external
+ConfigMap. The standard release name above yields the CronJob name used here;
+custom release names use a truncated chart fullname plus `-expired-report`.
+
 ## Deploy Tag Updater
 
 Select the track for your OKE cluster: **instance principal for a basic cluster** (the

@@ -70,3 +70,33 @@ serviceAccount:
   name: ""
   automountServiceAccountToken: false
   annotations: {}
+
+# Scheduled expiry notifications use the same Portal image and OCI identity.
+expiredResourceReport:
+  enabled: false
+  suspend: true # Review a manual dry run before enabling the schedule.
+  timeZone: "Etc/UTC" # Requires Kubernetes 1.27 or later.
+  mode: managers  # managers: shared topic; owners: one dedicated topic per email
+  dryRun: false
+  ownerNotifications:
+    compartmentId: ""
+    topicPrefix: "gitdash-expiry"
+    allowedEmailDomains: ""  # optional comma-separated exact domains, e.g. oracle.com
+  schedule: "0 9 1 * *"
+  command:
+    - python
+    - -m
+    - modules.reports.expired_resources_notification
+  regions: ""
+  maxItems: 25
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 2
+  notification:
+    topicId: ""
+    region: ""
+    endpoint: ""
+    title: "OCI expired resources"
+  podAnnotations: {}
+  resources: {}

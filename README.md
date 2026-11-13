@@ -123,3 +123,11 @@ end-to-end production deployment of the Portal, Tag Updater, and Extirpater.
 The infrastructure stack defaults to a basic OKE cluster
 and instance principals for all three components; select an enhanced cluster
 and the guide's workload-identity tracks when that identity model is required.
+
+The Portal Helm chart also supports scheduled expired-resource notifications in
+`expiredResourceReport`: `enabled` defaults to `false`, `suspend` to `true`,
+`mode` to `managers`, and `schedule` to `0 9 1 * *` in `Etc/UTC`.
+Manager mode requires `notification.topicId`; owner mode requires
+`ownerNotifications.compartmentId` and `notification.region`. Both reuse the
+Portal image and identity. See [notification deployment steps](DEPLOYMENT_GUIDE.md#scheduled-expired-resource-notifications)
+for permissions, owner subscriptions, a manual dry run, and activation.
